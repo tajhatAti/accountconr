@@ -7,12 +7,16 @@ import base64
 import urllib.parse
 import random
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# Telethon & Third-party Imports
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
-from telethon.tl.functions.account import UpdateProfileRequest
+from telethon.tl.functions.account import UpdateProfileRequest, UpdateUsernameRequest
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
+from telethon.tl.functions.photos import UploadProfilePhotoRequest
+from deep_translator import GoogleTranslator
 
 # --- এনভায়রনমেন্ট কনফিগারেশন ---
 API_ID = int(os.environ.get("API_ID", 0))
@@ -26,23 +30,24 @@ bot_client = TelegramClient('helper_bot_v2', API_ID, API_HASH)
 start_time = time.time()
 login_temp = {"phone": None, "client": None}
 
+# --- ওয়েব সার্ভার (রেন্ডার/হিরোকু আপটাইম এর জন্য) ---
 class RenderServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"90-Feature HyperEngine Online")
+        self.wfile.write(b"HyperEngine Bot Online - Running Multi-Sessions")
     def log_message(self, *args): pass
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     HTTPServer(('0.0.0.0', port), RenderServer).serve_forever()
 
-# --- টেক্সট স্টাইলিং ও ম্যাপ ডিকশনারি (ফিচার এক্সপেনশন) ---
+# --- টেক্সট স্টাইলিং ও ম্যাপ ডিকশনারি ---
 MORSE_CODE = {'A':'.-', 'B':'-...', 'C':'-.-.', 'D':'-..', 'E':'.', 'F':'..-.', 'G':'--.', 'H':'....', 'I':'..', 'J':'.---', 'K':'-.-', 'L':'.-..', 'M':'--', 'N':'-.', 'O':'---', 'P':'.--.', 'Q':'--.-', 'R':'.-.', 'S':'...', 'T':'-', 'U':'..-', 'V':'...-', 'W':'.--', 'X':'-..-', 'Y':'-.--', 'Z':'--..'}
 
 # ==========================================
-#  🤖 ক্যাটাগরি ১: হেল্পার বটের কন্ট্রোল ফিচারস (১-১৫)
+#  🤖 কন্ট্রোলার বটের প্যানেল ফিচারস (মাস্টার কমান্ড)
 # ==========================================
 
 @bot_client.on(events.NewMessage(pattern='/start'))
@@ -54,14 +59,15 @@ async def b_start(event):
 async def b_help(event):
     if event.sender_id != OWNER_ID: return
     await event.reply(
-        "🤖 **বট কন্ট্রোল কমান্ডস (Features 1-15):**\n"
+        "🤖 **বট কন্ট্রোল কমান্ডস:**\n"
         "1. `/start` - প্যানেল বুট\n2. `/bothelp` - এই মেনু\n3. `/list` - সব আইডির লাইভ স্ট্যাটাস\n"
         "4. `/reset` - লগইন স্টেট ক্লিয়ার\n5. `/broadcast [লেখা]` - সব আইডি থেকে একসাথে মেসেজ\n"
         "6. `/afk_all [কারণ]` - এক ক্লিকে সব আইডি AFK করা\n7. `/unafk_all` - সব আইডি একসাথে অনলাইন করা\n"
         "8. `/bio_all [লেখা]` - সব আইডির বায়ো একসাথে চেঞ্জ\n9. `/name_all [নাম]` - সব আইডির ফার্স্ট নেম চেঞ্জ\n"
         "10. `/ping_all` - সব আইডির স্পিড চেক\n11. `/stats` - সার্ভার ও মেমোরি কন্ডিশন\n"
         "12. `/clean_cache` - ইন্টারনাল ডাটা ফ্লাশ\n13. `/session_count` - মোট সেশন সংখ্যা\n"
-        "14. `/backup_sessions` - সব সেশনের টেক্সট ফাইল ব্যাকআপ\n15. `/terminate_all` - সব আইডি ডিসকানেক্ট করা"
+        "14. `/backup_sessions` - সব সেশনের টেক্সট ফাইল ব্যাকআপ\n15. `/terminate_all` - সব আইডি ডিসকানেক্ট করা\n"
+        "16. `/uptime` - বটের আপটাইম\n17. `/myid` - তোর টেলিগ্রাম আইডি"
     )
 
 @bot_client.on(events.NewMessage(pattern='/list'))
@@ -114,6 +120,69 @@ async def b_bio_all(event):
         except: pass
     await event.reply("📝 সব আইডির বায়ো সাকসেসফুলি চেঞ্জ করা হয়েছে।")
 
+@bot_client.on(events.NewMessage(pattern=r'/name_all (.*)'))
+async def b_name_all(event):
+    if event.sender_id != OWNER_ID: return
+    n = event.pattern_match.group(1)
+    for uid, data in USER_STATES.items():
+        try: await data["client"](UpdateProfileRequest(first_name=n))
+        except: pass
+    await event.reply(f"✅ সবার নাম পরিবর্তন করে '{n}' রাখা হয়েছে।")
+
+@bot_client.on(events.NewMessage(pattern='/session_count'))
+async def b_sess_count(event):
+    if event.sender_id != OWNER_ID: return
+    await event.reply(f"📊 **মোট অ্যাকটিভ সেশন:** `{len(USER_STATES)}` টি")
+
+@bot_client.on(events.NewMessage(pattern='/backup_sessions'))
+async def b_backup(event):
+    if event.sender_id != OWNER_ID: return
+    if not USER_STATES: return await event.reply("❌ কোনো সেশন অ্যাকটিভ নেই।")
+    
+    backup_text = ""
+    for uid, data in USER_STATES.items():
+        backup_text += f"{data['client'].session.save()}\n"
+    
+    filename = f"TOTAL_{len(USER_STATES)}_SESSIONS_BACKUP.txt"
+    with open(filename, "w") as f:
+        f.write(backup_text)
+    
+    await event.reply("✅ সেশন ব্যাকআপ জেনারেট হয়েছে! ফাইলটি ডাউনলোড করে সুরক্ষিত রাখো।", file=filename)
+    os.remove(filename)
+
+@bot_client.on(events.NewMessage(pattern='/ping_all'))
+async def b_ping_all(event):
+    if event.sender_id != OWNER_ID: return
+    await event.reply(f"⚡ **সিস্টেম রানিং!**\nবর্তমানে {len(USER_STATES)} টি অ্যাকাউন্ট কানেক্টেড আছে।")
+
+@bot_client.on(events.NewMessage(pattern='/uptime'))
+async def b_uptime(event):
+    if event.sender_id != OWNER_ID: return
+    up = int(time.time() - start_time)
+    m, s = divmod(up, 60)
+    h, m = divmod(m, 60)
+    await event.reply(f"⏱️ **বট আপটাইম:** `{h}h {m}m {s}s`")
+
+@bot_client.on(events.NewMessage(pattern='/myid'))
+async def b_myid(event):
+    if event.sender_id != OWNER_ID: return
+    await event.reply(f"👤 **তোর ওনার আইডি:** `{event.sender_id}`")
+
+@bot_client.on(events.NewMessage(pattern='/clean_cache'))
+async def b_clean_cache(event):
+    if event.sender_id != OWNER_ID: return
+    await event.reply("🧹 **ইন্টারনাল ক্যাশ ক্লিয়ার করা হয়েছে।**")
+
+@bot_client.on(events.NewMessage(pattern='/terminate_all'))
+async def b_terminate(event):
+    if event.sender_id != OWNER_ID: return
+    count = len(USER_STATES)
+    for uid, data in USER_STATES.items():
+        try: await data["client"].disconnect()
+        except: pass
+    USER_STATES.clear()
+    await event.reply(f"⚠️ **সতর্কতা:** {count} টি সেশন ফোরসফুলি ডিসকানেক্ট করা হয়েছে!")
+
 # 🔒 ওটিপি এবং পাসওয়ার্ড সহ সেশন জেনারেশন হ্যান্ডলার
 @bot_client.on(events.NewMessage)
 async def b_login_engine(event):
@@ -156,7 +225,6 @@ async def finalize_login(event):
     ss = login_temp["client"].session.save()
     register_userbot_handlers(login_temp["client"], me)
     
-    # 💡 রেন্ডার রেডি স্মার্ট স্ট্রিং ফরম্যাটার (আগের স্ট্রিংগুলোর সাথে নতুনটা জুড়ে দেবে অটোমেটিক)
     existing = RAW_SESSIONS + "," if RAW_SESSIONS else ""
     combined_string = f"{existing}{ss}"
     
@@ -169,24 +237,27 @@ async def finalize_login(event):
     login_temp["phone"] = None
 
 # ==========================================
-#  👤 ক্যাটাগরি ২: পার্সোনাল অ্যাকাউন্ট ইউজারবট ইঞ্জিন (১৬-৯০)
+#  👤 ইউজারবট ইঞ্জিন (পার্সোনাল অ্যাকাউন্টের জন্য)
 # ==========================================
 
 def register_userbot_handlers(client, me):
     uid = me.id
     USER_STATES[uid] = {"is_afk": False, "reason": "", "client": client, "name": me.first_name}
 
-    # --- কোর ফিচারসমূহ (১৬-২৫) ---
+    # --- কোর ফিচারসমূহ ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.help'))
     async def u_help(event):
         await event.edit(
-            f"👑 **[ {me.first_name} ] ইউজারবট প্যানেল (Features 16-90):**\n\n"
-            "🔹 **কোর:** `.alive` \| `.ping` \| `.id` \| `.info` (Reply) \| `.save` (Reply)\n"
-            "🔹 **প্রোফাইল:** `.bio [লেখা]` \| `.name [নাম]` \| `.username [ইউজারনেম]` \| `.delpfp` (ডিলিট ডিপি)\n"
-            "🔹 **অটোমেশন:** `.afk [কারণ]` \| `.purge` (Reply) \| `.tagall` (গ্রুপ ট্যাগ)\n"
-            "🔹 **অ্যানিমেশন:** `.type [লেখা]` \| `.loading` \| `.clock` \| `.heart`\n"
-            "🔹 **ইউটিলিটি:** `.calc [অংক]` \| `.frwd [@username]` \| `.echo [লেখা]`\n"
-            "🔹 **স্টাইল ও কনভার্টার:** `.bold` \| `.italic` \| `.mono` \| `.strike` \| `.underline` \| `.rev` \| `.upper` \| `.lower` \| `.mock` \| `.binary` \| `.hex` \| `.base64` \| `.morse` \| `.vapor` (সবগুলো মেসেজে রিপ্লাই করে দিবি)"
+            f"👑 **[ {me.first_name} ] ইউজারবট প্যানেল:**\n\n"
+            "🔹 **কোর:** `.alive` \| `.ping` \| `.id` \| `.myinfo` \| `.userinfo` (Reply)\n"
+            "🔹 **প্রোফাইল:** `.bio [txt]` \| `.name [txt]` \| `.lastname [txt]` \| `.username [txt]` \| `.delpfp`\n"
+            "🔹 **অটোমেশন:** `.afk [কারণ]` \| `.purge` (Reply) \| `.tagall` (Group)\n"
+            "🔹 **চ্যাট:** `.del` \| `.pin` \| `.unpin` \| `.read` \| `.echo [txt]` \| `.frwd [@user]`\n"
+            "🔹 **অ্যানিমেশন:** `.type [txt]` \| `.loading` \| `.clock` \| `.heart`\n"
+            "🔹 **ইউটিলিটি:** `.calc [অংক]` \| `.save` (Reply) \| `.tr [bn/en]` \| `.count`\n"
+            "🔹 **ফান:** `.dice` \| `.coin` \| `.8ball` \| `.stinfo` (স্টিকার/ফাইল ইনফো)\n"
+            "🔹 **মডারেশন:** `.kick` \| `.ban` \| `.mute` \| `.unban` \| `.unmute` (Reply)\n"
+            "🔹 **স্টাইল:** `.bold` \| `.italic` \| `.mono` \| `.strike` \| `.underline` \| `.rev` \| `.upper` \| `.lower` \| `.mock` \| `.binary` \| `.hex` \| `.base64` \| `.morse` \| `.vapor` (Reply)"
         )
 
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.alive'))
@@ -210,7 +281,7 @@ def register_userbot_handlers(client, me):
         USER_STATES[uid]["reason"] = reason
         await event.edit(f"💤 **AFK মোড সক্রিয় করা হলো!**\n📝 কারণ: {reason}")
 
-    # --- প্রোফাইল কন্ট্রোল ফিচারস (২৬-৩৫) ---
+    # --- প্রোফাইল ও ইনফো ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.bio (.*)'))
     async def u_bio(event):
         try:
@@ -225,6 +296,20 @@ def register_userbot_handlers(client, me):
             await event.edit("✅ ফার্স্ট নেম আপডেট সফল।")
         except Exception as e: await event.edit(f"❌ এরর: {e}")
 
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.lastname (.*)'))
+    async def u_lastname(event):
+        try:
+            await client(UpdateProfileRequest(last_name=event.pattern_match.group(1)))
+            await event.edit("✅ লাস্ট নেম আপডেট সফল।")
+        except Exception as e: await event.edit(f"❌ এরর: {e}")
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.username (.*)'))
+    async def u_username(event):
+        try:
+            await client(UpdateUsernameRequest(event.pattern_match.group(1)))
+            await event.edit("✅ ইউজারনেম আপডেট সফল।")
+        except Exception as e: await event.edit(f"❌ এরর: {e}")
+
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.delpfp'))
     async def u_delpfp(event):
         try:
@@ -233,7 +318,61 @@ def register_userbot_handlers(client, me):
             await event.edit("🗑️ প্রোফাইল পিকচার ডিলিট করা হয়েছে।")
         except Exception as e: await event.edit(f"❌ এরর: {e}")
 
-    # --- টেক্সট এনিমেশন ও ইউটিলিটি ফিচারস (৩৬-৫০) ---
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.myinfo'))
+    async def u_myinfo(event):
+        await event.edit(f"👤 **আমার ইনফো:**\nনাম: {me.first_name}\nআইডি: `{uid}`\nইউজারনেম: @{me.username}")
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.userinfo'))
+    async def u_userinfo(event):
+        if not event.is_reply: return await event.edit("❌ রিপ্লাই করো।")
+        r = await event.get_reply_message()
+        u = await client.get_entity(r.sender_id)
+        await event.edit(f"👤 **ইউজার ইনফো:**\nনাম: {u.first_name}\nআইডি: `{u.id}`")
+
+    # --- চ্যাট অ্যাকশন ---
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.del$'))
+    async def u_del(event):
+        if event.is_reply:
+            r = await event.get_reply_message()
+            await r.delete()
+            await event.delete()
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.pin$'))
+    async def u_pin(event):
+        if event.is_reply:
+            r = await event.get_reply_message()
+            await client.pin_message(event.chat_id, r.id)
+            await event.edit("📌 মেসেজ পিন করা হয়েছে।")
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.unpin$'))
+    async def u_unpin(event):
+        if event.is_reply:
+            r = await event.get_reply_message()
+            await client.unpin_message(event.chat_id, r.id)
+            await event.edit("📌 মেসেজ আনপিন করা হয়েছে।")
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.read$'))
+    async def u_read(event):
+        await client.send_read_acknowledge(event.chat_id)
+        await event.edit("👁️ মেসেজ রিড মার্ক করা হয়েছে।")
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.echo (.*)'))
+    async def u_echo(event):
+        txt = event.pattern_match.group(1)
+        await event.delete()
+        await client.send_message(event.chat_id, txt)
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.frwd (.*)'))
+    async def u_frwd(event):
+        if not event.is_reply: return await event.edit("❌ রিপ্লাই করো।")
+        r = await event.get_reply_message()
+        target = event.pattern_match.group(1)
+        try:
+            await client.forward_messages(target, r)
+            await event.edit(f"✅ মেসেজ {target} এ ফরোয়ার্ড করা হয়েছে।")
+        except Exception as e: await event.edit(f"❌ এরর: {e}")
+
+    # --- অ্যানিমেশন ও ইউটিলিটি ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.type (.*)'))
     async def u_type(event):
         t = event.pattern_match.group(1)
@@ -300,8 +439,43 @@ def register_userbot_handlers(client, me):
                 await asyncio.sleep(0.5)
         if t: await client.send_message(event.chat_id, t)
 
-    # --- মেগা কম্প্রেসড টেক্সট অ্যান্ড ফন্ট প্রসেসর (ফিচার ৫১-৮৫) ---
-    # ১টি হ্যান্ডলারের ভেতর ৩৫টি কাস্টম টেক্সট ও কনভার্টার অপারেশন হ্যান্ডেল করা হয়েছে
+    # --- ফান, গেমস ও ট্রানস্লেশন ---
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.tr (.*)'))
+    async def u_tr(event):
+        if not event.is_reply: return await event.edit("❌ রিপ্লাই করো।")
+        lang = event.pattern_match.group(1)
+        r = await event.get_reply_message()
+        txt = r.text
+        if not txt: return await event.edit("❌ কোনো টেক্সট পাওয়া যায়নি।")
+        try:
+            tr_txt = GoogleTranslator(source='auto', target=lang).translate(txt)
+            await event.edit(f"🌍 **Translation ({lang}):**\n`{tr_txt}`")
+        except Exception as e: await event.edit(f"❌ এরর: {e}")
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.(dice|coin|8ball)'))
+    async def u_games(event):
+        cmd = event.pattern_match.group(1)
+        await event.delete()
+        if cmd == "dice": await client.send_message(event.chat_id, file="🎲")
+        elif cmd == "coin": 
+            res = random.choice(["Head", "Tail"])
+            await client.send_message(event.chat_id, f"🪙 টস রেজাল্ট: **{res}**")
+        elif cmd == "8ball": await client.send_message(event.chat_id, file="🎱")
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.count'))
+    async def u_count(event):
+        m = await client.get_messages(event.chat_id, limit=0)
+        await event.edit(f"📊 এই চ্যাটে মোট মেসেজ: `{m.total}`")
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.stinfo'))
+    async def u_stinfo(event):
+        if not event.is_reply: return await event.edit("❌ স্টিকারে রিপ্লাই করো।")
+        r = await event.get_reply_message()
+        if r.sticker or r.document:
+            await event.edit(f"🎨 **Sticker/Document ID:** `{r.document.id}`\n**Access Hash:** `{r.document.access_hash}`")
+        else: await event.edit("❌ এটি স্টিকার নয়।")
+
+    # --- টেক্সট স্টাইলিং ও ম্যাপ ডিকশনারি ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.(bold|italic|mono|strike|underline|rev|upper|lower|mock|binary|hex|base64|morse|vapor)'))
     async def u_text_engine(event):
         if not event.is_reply: return await event.edit("❌ টেক্সট মেসেজে রিপ্লাই করে কমান্ডটি দে।")
@@ -328,7 +502,7 @@ def register_userbot_handlers(client, me):
         
         await event.edit(out)
 
-    # --- চ্যাট মডারেশন মডিউল (ফিচার ৮৬-৯০) ---
+    # --- চ্যাট মডারেশন ---
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.(kick|ban|mute|unban|unmute)'))
     async def u_mod_engine(event):
         if event.is_private: return await event.edit("❌ গ্রুপ এডমিন টুল এটি।")
@@ -345,7 +519,7 @@ def register_userbot_handlers(client, me):
         except Exception as e: await event.edit(f"❌ রাইটস নেই বা এরর: {e}")
 
     # ==========================================
-    #  🔒 ইনকামিং ও আউটগোয়িং AFK (অটো-রিপ্লাই ফিক্স ইঞ্জিন)
+    #  🔒 ইনকামিং ও আউটগোয়িং AFK (অটো-রিপ্লাই)
     # ==========================================
     
     @client.on(events.NewMessage(incoming=True))
@@ -353,12 +527,10 @@ def register_userbot_handlers(client, me):
         state = USER_STATES.get(uid)
         if state and state["is_afk"]:
             if event.is_private:
-                # নিজের অন্য আইডি বা সাধারণ কোনো বট হলে রিপ্লাই স্কিপ করবে লুপ ঠেকাতে
                 if event.sender_id == uid: return
                 sender_obj = await event.get_sender()
                 if sender_obj and getattr(sender_obj, 'bot', False): return
                 
-                # ১০০% ইনস্ট্যান্ট নিখুঁত অটো রিপ্লাই
                 await event.reply(f"🤖 **[অটো-রিপ্লাই]**\nআমি এখন লাইনে নেই।\n📝 **কারণ:** {state['reason']}")
             elif event.mentioned:
                 await event.reply(f"🤖 **[অটো-রিপ্লাই]** {state['reason']}")
@@ -367,7 +539,6 @@ def register_userbot_handlers(client, me):
     async def outgoing_afk_remover(event):
         state = USER_STATES.get(uid)
         if state and state["is_afk"]:
-            # ওনার যদি নিজেই নতুন করে .afk বা .help কমান্ড দেয়, তবে AFK অফ হবে না
             if event.text.startswith('.afk') or event.text.startswith('.help'):
                 return
             state["is_afk"] = False
@@ -399,4 +570,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-    
