@@ -1,1 +1,3 @@
-telethon 
+Telethon==1.33.1
+cryptg
+deep-translator
