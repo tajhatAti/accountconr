@@ -7,11 +7,11 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
 
-# --- কনফিগারেশন ---
-API_ID = 37109385  # তোর API ID
-API_HASH = "b50a9ccaf4a0352b895a9fb2998c7f0d"  # তোর API Hash
-BOT_TOKEN = "8819790088:AAFHfaPUMYkD32DV9CbDiF80q_6RuKeJT1A"  # গেটওয়ে বটের টোকেন
-OWNER_ID = 8768764605 # তোর পার্সোনাল আইডি
+# --- কনফিগারেশন (সুরক্ষিত মেথড) ---
+API_ID = int(os.environ.get("API_ID", 0))  
+API_HASH = os.environ.get("API_HASH", "")  
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")  
+OWNER_ID = int(os.environ.get("OWNER_ID", 0))  
 
 # গলোবাল স্টেট
 phone_number = None
