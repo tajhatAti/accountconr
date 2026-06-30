@@ -9,8 +9,7 @@ from telethon.errors import SessionPasswordNeededError
 
 # --- কনফিগারেশন ---
 API_ID = 37109385  # তোর API ID (অবশ্যই ইন্টিজার হতে হবে)
-API_HASH = "b50a9ccaf4a0352b895a9fb2998c7f0d
-"  # তোর API Hash
+API_HASH = "b50a9ccaf4a0352b895a9fb2998c7f0d"  # তোর API Hash
 BOT_TOKEN = "8819790088:AAGjQLTHTpTYqUYTeBW8KFw9P52UwMdC68Y"  # BotFather থেকে নেওয়া একটি ফ্রি বটের টোকেন
 OWNER_ID = 8768764605  # তোর নিজের পার্সোনাল অ্যাকাউন্টের আইডি (সুরক্ষার জন্য)
 
