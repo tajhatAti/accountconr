@@ -234,15 +234,13 @@ def register_userbot_handlers(client, me):
             start = time.time()
             msg = await event.reply("`Processing Latency Metrics...`") if not is_owner else await event.edit("`Processing Latency Metrics...`")
             end = time.time()
-            await msg.edit(f"🏓 **System Latency Response Time:** `{(end - start) * 1000:.2f}ms`")
+            await msg.edit(f" ** 🎯 Pong!/n:** ⏱️`{(end - start) * 1000:.2f}ms`")
 
         elif cmd_name == "alive":
             uptime = get_uptime()
             alive_msg = (
-                f"⚡ **HyperEngine Core Node Operational**\n"
-                f"▫️ **Status:** Perfect Matrix Architecture\n"
-                f"▫️ **Node Account Identity:** {me.first_name}\n"
-                f"▫️ **System Engine Runtime:** `{uptime}`"
+                f"▫️ ** Identity:** {me.first_name}\n"
+                f"▫️ **Uptime:** `{uptime}`"
             )
             await event.reply(alive_msg) if not is_owner else await event.edit(alive_msg)
 
