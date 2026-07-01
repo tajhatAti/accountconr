@@ -10,7 +10,7 @@ from telethon.sessions import StringSession
 # --- Configuration ---
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
-RAW_SESSIONS = os.environ.get("STRING_SESSIONS", "")
+RAW_SESSION = os.environ.get("STRING_SESSION", "")
 CONFIG_FILE = "bot_data.json"
 
 start_time = time.time()
@@ -254,12 +254,12 @@ def register_handlers(client, me):
 
 # --- Main Bootstrapper ---
 async def main():
-    if not RAW_SESSIONS:
+    if not RAW_SESSION:
         print("[-] ERROR: STRING_SESSION is missing.")
         return
 
     print("[+] Initializing Engine...")
-    client = TelegramClient(StringSession(RAW_SESSIONS), API_ID, API_HASH)
+    client = TelegramClient(StringSession(RAW_SESSION), API_ID, API_HASH)
     
     await client.connect()
     if not await client.is_user_authorized():
@@ -274,4 +274,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-                
+            
