@@ -194,11 +194,13 @@ def register_userbot_handlers(client, me):
         # --- COMMAND PROCESSING ---
         output_msg = None
 
-        if cmd_name == "ping":
+        elif cmd_name == "ping":
             start = time.time()
-            msg = await event.reply("`Processing...`") if not is_owner else await event.edit("`Processing...`")
+            # সবক্ষেত্রে আগে একটা রিপ্লাই পাঠাবে, তারপর সেটা এডিট করবে (এটা সবচেয়ে নিরাপদ)
+            msg = await event.reply("`Processing...`")
             end = time.time()
             latency = int((end - start) * 1000)
+            
             status = "🟢 Excellent" if latency < 150 else ("🟡 Average" if latency < 400 else "🔴 Poor")
             
             output = (
@@ -209,6 +211,7 @@ def register_userbot_handlers(client, me):
                 f"🗑 *This message will be deleted after {AUTO_DELETE_DELAY} seconds.*"
             )
             output_msg = await msg.edit(output)
+
 
         elif cmd_name == "alive":
             output = (
