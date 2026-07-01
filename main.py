@@ -26,7 +26,7 @@ OWNER_ID = int(os.environ.get("OWNER_ID", 0))
 RAW_SESSIONS = os.environ.get("STRING_SESSIONS", "")
 
 USER_STATES = {} 
-bot_client = TelegramClient('helper_bot_v2', API_ID, API_HASH)
+bot_client = None  # ফিক্স: গ্লোবালি ইনিশিয়ালাইজ করা যাবে না, লুপের জন্য None রাখা হলো
 start_time = time.time()
 login_temp = {"phone": None, "client": None}
 
@@ -50,175 +50,176 @@ MORSE_CODE = {'A':'.-', 'B':'-...', 'C':'-.-.', 'D':'-..', 'E':'.', 'F':'..-.', 
 #  🤖 কন্ট্রোলার বটের প্যানেল ফিচারস (মাস্টার কমান্ড)
 # ==========================================
 
-@bot_client.on(events.NewMessage(pattern='/start'))
-async def b_start(event):
-    if event.sender_id != OWNER_ID: return
-    await event.reply("⚙️ **মেগা ডুয়াল ইউজারবট প্যানেল সচল!**\n\n💬 নতুন আইডি যোগ করতে সরাসরি আন্তর্জাতিক নাম্বারে মেসেজ দে (যেমন: `+88017...`)\n💬 বটের সব কমান্ড দেখতে কমান্ড কর: `/bothelp`")
+def setup_bot_handlers(client):
+    @client.on(events.NewMessage(pattern='/start'))
+    async def b_start(event):
+        if event.sender_id != OWNER_ID: return
+        await event.reply("⚙️ **মেগা ডুয়াল ইউজারবট প্যানেল সচল!**\n\n💬 নতুন আইডি যোগ করতে সরাসরি আন্তর্জাতিক নাম্বারে মেসেজ দে (যেমন: `+88017...`)\n💬 বটের সব কমান্ড দেখতে কমান্ড কর: `/bothelp`")
 
-@bot_client.on(events.NewMessage(pattern='/bothelp'))
-async def b_help(event):
-    if event.sender_id != OWNER_ID: return
-    await event.reply(
-        "🤖 **বট কন্ট্রোল কমান্ডস:**\n"
-        "1. `/start` - প্যানেল বুট\n2. `/bothelp` - এই মেনু\n3. `/list` - সব আইডির লাইভ স্ট্যাটাস\n"
-        "4. `/reset` - লগইন স্টেট ক্লিয়ার\n5. `/broadcast [লেখা]` - সব আইডি থেকে একসাথে মেসেজ\n"
-        "6. `/afk_all [কারণ]` - এক ক্লিকে সব আইডি AFK করা\n7. `/unafk_all` - সব আইডি একসাথে অনলাইন করা\n"
-        "8. `/bio_all [লেখা]` - সব আইডির বায়ো একসাথে চেঞ্জ\n9. `/name_all [নাম]` - সব আইডির ফার্স্ট নেম চেঞ্জ\n"
-        "10. `/ping_all` - সব আইডির স্পিড চেক\n11. `/stats` - সার্ভার ও মেমোরি কন্ডিশন\n"
-        "12. `/clean_cache` - ইন্টারনাল ডাটা ফ্লাশ\n13. `/session_count` - মোট সেশন সংখ্যা\n"
-        "14. `/backup_sessions` - সব সেশনের টেক্সট ফাইল ব্যাকআপ\n15. `/terminate_all` - সব আইডি ডিসকানেক্ট করা\n"
-        "16. `/uptime` - বটের আপটাইম\n17. `/myid` - তোর টেলিগ্রাম আইডি"
-    )
+    @client.on(events.NewMessage(pattern='/bothelp'))
+    async def b_help(event):
+        if event.sender_id != OWNER_ID: return
+        await event.reply(
+            "🤖 **বট কন্ট্রোল কমান্ডস:**\n"
+            "1. `/start` - প্যানেল বুট\n2. `/bothelp` - এই মেনু\n3. `/list` - সব আইডির লাইভ স্ট্যাটাস\n"
+            "4. `/reset` - লগইন স্টেট ক্লিয়ার\n5. `/broadcast [লেখা]` - সব আইডি থেকে একসাথে মেসেজ\n"
+            "6. `/afk_all [কারণ]` - এক ক্লিকে সব আইডি AFK করা\n7. `/unafk_all` - সব আইডি একসাথে অনলাইন করা\n"
+            "8. `/bio_all [লেখা]` - সব আইডির বায়ো একসাথে চেঞ্জ\n9. `/name_all [নাম]` - সব আইডির ফার্স্ট নেম চেঞ্জ\n"
+            "10. `/ping_all` - সব আইডির স্পিড চেক\n11. `/stats` - সার্ভার ও মেমোরি কন্ডিশন\n"
+            "12. `/clean_cache` - ইন্টারনাল ডাটা ফ্লাশ\n13. `/session_count` - মোট সেশন সংখ্যা\n"
+            "14. `/backup_sessions` - সব সেশনের টেক্সট ফাইল ব্যাকআপ\n15. `/terminate_all` - সব আইডি ডিসকানেক্ট করা\n"
+            "16. `/uptime` - বটের আপটাইম\n17. `/myid` - তোর টেলিগ্রাম আইডি"
+        )
 
-@bot_client.on(events.NewMessage(pattern='/list'))
-async def b_list(event):
-    if event.sender_id != OWNER_ID: return
-    if not USER_STATES: return await event.reply("❌ কোনো একাউন্ট কানেক্টেড নেই।")
-    msg = "📋 **সংযুক্ত অ্যাকাউন্টসমূহ:**\n\n"
-    for idx, (uid, data) in enumerate(USER_STATES.items(), 1):
-        st = "💤 AFK" if data["is_afk"] else "🟢 অনলাইন"
-        msg += f"{idx}. 👤 **{data['name']}** (`{uid}`) - স্ট্যাটাস: {st}\n"
-    await event.reply(msg)
+    @client.on(events.NewMessage(pattern='/list'))
+    async def b_list(event):
+        if event.sender_id != OWNER_ID: return
+        if not USER_STATES: return await event.reply("❌ কোনো একাউন্ট কানেক্টেড নেই।")
+        msg = "📋 **সংযুক্ত অ্যাকাউন্টসমূহ:**\n\n"
+        for idx, (uid, data) in enumerate(USER_STATES.items(), 1):
+            st = "💤 AFK" if data["is_afk"] else "🟢 অনলাইন"
+            msg += f"{idx}. 👤 **{data['name']}** (`{uid}`) - স্ট্যাটাস: {st}\n"
+        await event.reply(msg)
 
-@bot_client.on(events.NewMessage(pattern='/reset'))
-async def b_reset(event):
-    if event.sender_id != OWNER_ID: return
-    login_temp["phone"] = None
-    if login_temp["client"]: await login_temp["client"].disconnect()
-    await event.reply("🔄 লগইন মেমোরি রিসেট সফল।")
+    @client.on(events.NewMessage(pattern='/reset'))
+    async def b_reset(event):
+        if event.sender_id != OWNER_ID: return
+        login_temp["phone"] = None
+        if login_temp["client"]: await login_temp["client"].disconnect()
+        await event.reply("🔄 লগইন মেমোরি রিসেট সফল।")
 
-@bot_client.on(events.NewMessage(pattern=r'/broadcast (.*)'))
-async def b_spammer(event):
-    if event.sender_id != OWNER_ID: return
-    txt = event.pattern_match.group(1)
-    for uid, data in USER_STATES.items():
-        try: await data["client"].send_message("me", f"📢 **[Bot Broadcast]:** {txt}")
-        except: pass
-    await event.reply("✅ সব আইডির Saved Messages-এ ব্রডকাস্ট পাঠানো হয়েছে।")
+    @client.on(events.NewMessage(pattern=r'/broadcast (.*)'))
+    async def b_spammer(event):
+        if event.sender_id != OWNER_ID: return
+        txt = event.pattern_match.group(1)
+        for uid, data in USER_STATES.items():
+            try: await data["client"].send_message("me", f"📢 **[Bot Broadcast]:** {txt}")
+            except: pass
+        await event.reply("✅ সব আইডির Saved Messages-এ ব্রডকাস্ট পাঠানো হয়েছে।")
 
-@bot_client.on(events.NewMessage(pattern=r'/afk_all (.*)'))
-async def b_afk_all(event):
-    if event.sender_id != OWNER_ID: return
-    r = event.pattern_match.group(1)
-    for uid in USER_STATES:
-        USER_STATES[uid]["is_afk"] = True
-        USER_STATES[uid]["reason"] = r
-    await event.reply(f"🔒 সব আইডিকে AFK করা হয়েছে। কারণ: {r}")
+    @client.on(events.NewMessage(pattern=r'/afk_all (.*)'))
+    async def b_afk_all(event):
+        if event.sender_id != OWNER_ID: return
+        r = event.pattern_match.group(1)
+        for uid in USER_STATES:
+            USER_STATES[uid]["is_afk"] = True
+            USER_STATES[uid]["reason"] = r
+        await event.reply(f"🔒 সব আইডিকে AFK করা হয়েছে। কারণ: {r}")
 
-@bot_client.on(events.NewMessage(pattern='/unafk_all'))
-async def b_unafk_all(event):
-    if event.sender_id != OWNER_ID: return
-    for uid in USER_STATES: USER_STATES[uid]["is_afk"] = False
-    await event.reply("🔓 সব আইডির AFK মোড অফ করা হয়েছে।")
+    @client.on(events.NewMessage(pattern='/unafk_all'))
+    async def b_unafk_all(event):
+        if event.sender_id != OWNER_ID: return
+        for uid in USER_STATES: USER_STATES[uid]["is_afk"] = False
+        await event.reply("🔓 সব আইডির AFK মোড অফ করা হয়েছে।")
 
-@bot_client.on(events.NewMessage(pattern=r'/bio_all (.*)'))
-async def b_bio_all(event):
-    if event.sender_id != OWNER_ID: return
-    bi = event.pattern_match.group(1)
-    for uid, data in USER_STATES.items():
-        try: await data["client"](UpdateProfileRequest(about=bi))
-        except: pass
-    await event.reply("📝 সব আইডির বায়ো সাকসেসফুলি চেঞ্জ করা হয়েছে।")
+    @client.on(events.NewMessage(pattern=r'/bio_all (.*)'))
+    async def b_bio_all(event):
+        if event.sender_id != OWNER_ID: return
+        bi = event.pattern_match.group(1)
+        for uid, data in USER_STATES.items():
+            try: await data["client"](UpdateProfileRequest(about=bi))
+            except: pass
+        await event.reply("📝 সব আইডির বায়ো সাকসেসফুলি চেঞ্জ করা হয়েছে।")
 
-@bot_client.on(events.NewMessage(pattern=r'/name_all (.*)'))
-async def b_name_all(event):
-    if event.sender_id != OWNER_ID: return
-    n = event.pattern_match.group(1)
-    for uid, data in USER_STATES.items():
-        try: await data["client"](UpdateProfileRequest(first_name=n))
-        except: pass
-    await event.reply(f"✅ সবার নাম পরিবর্তন করে '{n}' রাখা হয়েছে।")
+    @client.on(events.NewMessage(pattern=r'/name_all (.*)'))
+    async def b_name_all(event):
+        if event.sender_id != OWNER_ID: return
+        n = event.pattern_match.group(1)
+        for uid, data in USER_STATES.items():
+            try: await data["client"](UpdateProfileRequest(first_name=n))
+            except: pass
+        await event.reply(f"✅ সবার নাম পরিবর্তন করে '{n}' রাখা হয়েছে।")
 
-@bot_client.on(events.NewMessage(pattern='/session_count'))
-async def b_sess_count(event):
-    if event.sender_id != OWNER_ID: return
-    await event.reply(f"📊 **মোট অ্যাকটিভ সেশন:** `{len(USER_STATES)}` টি")
+    @client.on(events.NewMessage(pattern='/session_count'))
+    async def b_sess_count(event):
+        if event.sender_id != OWNER_ID: return
+        await event.reply(f"📊 **মোট অ্যাকটিভ সেশন:** `{len(USER_STATES)}` টি")
 
-@bot_client.on(events.NewMessage(pattern='/backup_sessions'))
-async def b_backup(event):
-    if event.sender_id != OWNER_ID: return
-    if not USER_STATES: return await event.reply("❌ কোনো সেশন অ্যাকটিভ নেই।")
-    
-    backup_text = ""
-    for uid, data in USER_STATES.items():
-        backup_text += f"{data['client'].session.save()}\n"
-    
-    filename = f"TOTAL_{len(USER_STATES)}_SESSIONS_BACKUP.txt"
-    with open(filename, "w") as f:
-        f.write(backup_text)
-    
-    await event.reply("✅ সেশন ব্যাকআপ জেনারেট হয়েছে! ফাইলটি ডাউনলোড করে সুরক্ষিত রাখো।", file=filename)
-    os.remove(filename)
+    @client.on(events.NewMessage(pattern='/backup_sessions'))
+    async def b_backup(event):
+        if event.sender_id != OWNER_ID: return
+        if not USER_STATES: return await event.reply("❌ কোনো সেশন অ্যাকটিভ নেই।")
+        
+        backup_text = ""
+        for uid, data in USER_STATES.items():
+            backup_text += f"{data['client'].session.save()}\n"
+        
+        filename = f"TOTAL_{len(USER_STATES)}_SESSIONS_BACKUP.txt"
+        with open(filename, "w") as f:
+            f.write(backup_text)
+        
+        await event.reply("✅ সেশন ব্যাকআপ জেনারেট হয়েছে! ফাইলটি ডাউনলোড করে সুরক্ষিত রাখো।", file=filename)
+        os.remove(filename)
 
-@bot_client.on(events.NewMessage(pattern='/ping_all'))
-async def b_ping_all(event):
-    if event.sender_id != OWNER_ID: return
-    await event.reply(f"⚡ **সিস্টেম রানিং!**\nবর্তমানে {len(USER_STATES)} টি অ্যাকাউন্ট কানেক্টেড আছে।")
+    @client.on(events.NewMessage(pattern='/ping_all'))
+    async def b_ping_all(event):
+        if event.sender_id != OWNER_ID: return
+        await event.reply(f"⚡ **সিস্টেম রানিং!**\nবর্তমানে {len(USER_STATES)} টি অ্যাকাউন্ট কানেক্টেড আছে।")
 
-@bot_client.on(events.NewMessage(pattern='/uptime'))
-async def b_uptime(event):
-    if event.sender_id != OWNER_ID: return
-    up = int(time.time() - start_time)
-    m, s = divmod(up, 60)
-    h, m = divmod(m, 60)
-    await event.reply(f"⏱️ **বট আপটাইম:** `{h}h {m}m {s}s`")
+    @client.on(events.NewMessage(pattern='/uptime'))
+    async def b_uptime(event):
+        if event.sender_id != OWNER_ID: return
+        up = int(time.time() - start_time)
+        m, s = divmod(up, 60)
+        h, m = divmod(m, 60)
+        await event.reply(f"⏱️ **বট আপটাইম:** `{h}h {m}m {s}s`")
 
-@bot_client.on(events.NewMessage(pattern='/myid'))
-async def b_myid(event):
-    if event.sender_id != OWNER_ID: return
-    await event.reply(f"👤 **তোর ওনার আইডি:** `{event.sender_id}`")
+    @client.on(events.NewMessage(pattern='/myid'))
+    async def b_myid(event):
+        if event.sender_id != OWNER_ID: return
+        await event.reply(f"👤 **তোর ওনার আইডি:** `{event.sender_id}`")
 
-@bot_client.on(events.NewMessage(pattern='/clean_cache'))
-async def b_clean_cache(event):
-    if event.sender_id != OWNER_ID: return
-    await event.reply("🧹 **ইন্টারনাল ক্যাশ ক্লিয়ার করা হয়েছে।**")
+    @client.on(events.NewMessage(pattern='/clean_cache'))
+    async def b_clean_cache(event):
+        if event.sender_id != OWNER_ID: return
+        await event.reply("🧹 **ইন্টারনাল ক্যাশ ক্লিয়ার করা হয়েছে।**")
 
-@bot_client.on(events.NewMessage(pattern='/terminate_all'))
-async def b_terminate(event):
-    if event.sender_id != OWNER_ID: return
-    count = len(USER_STATES)
-    for uid, data in USER_STATES.items():
-        try: await data["client"].disconnect()
-        except: pass
-    USER_STATES.clear()
-    await event.reply(f"⚠️ **সতর্কতা:** {count} টি সেশন ফোরসফুলি ডিসকানেক্ট করা হয়েছে!")
+    @client.on(events.NewMessage(pattern='/terminate_all'))
+    async def b_terminate(event):
+        if event.sender_id != OWNER_ID: return
+        count = len(USER_STATES)
+        for uid, data in USER_STATES.items():
+            try: await data["client"].disconnect()
+            except: pass
+        USER_STATES.clear()
+        await event.reply(f"⚠️ **সতর্কতা:** {count} টি সেশন ফোরসফুলি ডিসকানেক্ট করা হয়েছে!")
 
-# 🔒 ওটিপি এবং পাসওয়ার্ড সহ সেশন জেনারেশন হ্যান্ডলার
-@bot_client.on(events.NewMessage)
-async def b_login_engine(event):
-    if event.sender_id != OWNER_ID or event.text.startswith('/'): return
-    text = event.text.strip()
+    # 🔒 ওটিপি এবং পাসওয়ার্ড সহ সেশন জেনারেশন হ্যান্ডলার
+    @client.on(events.NewMessage)
+    async def b_login_engine(event):
+        if event.sender_id != OWNER_ID or event.text.startswith('/'): return
+        text = event.text.strip()
 
-    if text.startswith('+') and login_temp["phone"] is None:
-        login_temp["phone"] = text
-        await event.reply("⏳ ওটিপি কোড রিকোয়েস্ট পাঠানো হচ্ছে...")
-        try:
-            login_temp["client"] = TelegramClient(StringSession(), API_ID, API_HASH)
-            await login_temp["client"].connect()
-            await login_temp["client"].send_code_request(login_temp["phone"])
-            await event.reply("📩 কোড গেছে। এভাবে রিপ্লাই দে: `code 12345`")
-        except Exception as e:
-            login_temp["phone"] = None
-            await event.reply(f"❌ এরর: {e}")
+        if text.startswith('+') and login_temp["phone"] is None:
+            login_temp["phone"] = text
+            await event.reply("⏳ ওটিপি কোড রিকোয়েস্ট পাঠানো হচ্ছে...")
+            try:
+                login_temp["client"] = TelegramClient(StringSession(), API_ID, API_HASH)
+                await login_temp["client"].connect()
+                await login_temp["client"].send_code_request(login_temp["phone"])
+                await event.reply("📩 কোড গেছে। এভাবে রিপ্লাই দে: `code 12345`")
+            except Exception as e:
+                login_temp["phone"] = None
+                await event.reply(f"❌ এরর: {e}")
 
-    elif text.startswith('code ') and login_temp["phone"] is not None:
-        c = text.split(' ')[1]
-        try:
-            await login_temp["client"].sign_in(login_temp["phone"], c)
-            await finalize_login(event)
-        except SessionPasswordNeededError:
-            await event.reply("🔐 2FA অন আছে। পাসওয়ার্ড এভাবে পাঠা: `pass তোর_পাসওয়ার্ড`")
-        except Exception as e:
-            login_temp["phone"] = None
-            await event.reply(f"❌ লগইন ফেইলড: {e}")
+        elif text.startswith('code ') and login_temp["phone"] is not None:
+            c = text.split(' ')[1]
+            try:
+                await login_temp["client"].sign_in(login_temp["phone"], c)
+                await finalize_login(event)
+            except SessionPasswordNeededError:
+                await event.reply("🔐 2FA অন আছে। পাসওয়ার্ড এভাবে পাঠা: `pass তোর_পাসওয়ার্ড`")
+            except Exception as e:
+                login_temp["phone"] = None
+                await event.reply(f"❌ লগইন ফেইলড: {e}")
 
-    elif text.startswith('pass ') and login_temp["phone"] is not None:
-        p = text.replace('pass ', '').strip()
-        try:
-            await login_temp["client"].sign_in(password=p)
-            await finalize_login(event)
-        except Exception as e:
-            await event.reply(f"❌ পাসওয়ার্ড ভুল: {e}")
+        elif text.startswith('pass ') and login_temp["phone"] is not None:
+            p = text.replace('pass ', '').strip()
+            try:
+                await login_temp["client"].sign_in(password=p)
+                await finalize_login(event)
+            except Exception as e:
+                await event.reply(f"❌ পাসওয়ার্ড ভুল: {e}")
 
 async def finalize_login(event):
     me = await login_temp["client"].get_me()
@@ -249,15 +250,15 @@ def register_userbot_handlers(client, me):
     async def u_help(event):
         await event.edit(
             f"👑 **[ {me.first_name} ] ইউজারবট প্যানেল:**\n\n"
-            "🔹 **কোর:** `.alive` \| `.ping` \| `.id` \| `.myinfo` \| `.userinfo` (Reply)\n"
-            "🔹 **প্রোফাইল:** `.bio [txt]` \| `.name [txt]` \| `.lastname [txt]` \| `.username [txt]` \| `.delpfp`\n"
-            "🔹 **অটোমেশন:** `.afk [কারণ]` \| `.purge` (Reply) \| `.tagall` (Group)\n"
-            "🔹 **চ্যাট:** `.del` \| `.pin` \| `.unpin` \| `.read` \| `.echo [txt]` \| `.frwd [@user]`\n"
-            "🔹 **অ্যানিমেশন:** `.type [txt]` \| `.loading` \| `.clock` \| `.heart`\n"
-            "🔹 **ইউটিলিটি:** `.calc [অংক]` \| `.save` (Reply) \| `.tr [bn/en]` \| `.count`\n"
-            "🔹 **ফান:** `.dice` \| `.coin` \| `.8ball` \| `.stinfo` (স্টিকার/ফাইল ইনফো)\n"
-            "🔹 **মডারেশন:** `.kick` \| `.ban` \| `.mute` \| `.unban` \| `.unmute` (Reply)\n"
-            "🔹 **স্টাইল:** `.bold` \| `.italic` \| `.mono` \| `.strike` \| `.underline` \| `.rev` \| `.upper` \| `.lower` \| `.mock` \| `.binary` \| `.hex` \| `.base64` \| `.morse` \| `.vapor` (Reply)"
+            "🔹 **কোর:** `.alive` | `.ping` | `.id` | `.myinfo` | `.userinfo` (Reply)\n"
+            "🔹 **প্রোফাইল:** `.bio [txt]` | `.name [txt]` | `.lastname [txt]` | `.username [txt]` | `.delpfp`\n"
+            "🔹 **অটোমেশন:** `.afk [কারণ]` | `.purge` (Reply) | `.tagall` (Group)\n"
+            "🔹 **চ্যাট:** `.del` | `.pin` | `.unpin` | `.read` | `.echo [txt]` | `.frwd [@user]`\n"
+            "🔹 **অ্যানিমেশন:** `.type [txt]` | `.loading` | `.clock` | `.heart`\n"
+            "🔹 **ইউটিলিটি:** `.calc [অংক]` | `.save` (Reply) | `.tr [bn/en]` | `.count`\n"
+            "🔹 **ফান:** `.dice` | `.coin` | `.8ball` | `.stinfo` (স্টিকার/ফাইল ইনফো)\n"
+            "🔹 **মডারেশন:** `.kick` | `.ban` | `.mute` | `.unban` | `.unmute` (Reply)\n"
+            "🔹 **স্টাইল:** `.bold` | `.italic` | `.mono` | `.strike` | `.underline` | `.rev` | `.upper` | `.lower` | `.mock` | `.binary` | `.hex` | `.base64` | `.morse` | `.vapor` (Reply)"
         )
 
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.alive'))
@@ -550,6 +551,12 @@ def register_userbot_handlers(client, me):
 #  🔄 রানিং বুটস্ট্র্যাপ
 # ==========================================
 async def main():
+    global bot_client
+    bot_client = TelegramClient('helper_bot_v2', API_ID, API_HASH)
+    
+    # হ্যান্ডলারগুলো রেজিস্টার করা হচ্ছে
+    setup_bot_handlers(bot_client)
+
     threading.Thread(target=run_web_server, daemon=True).start()
     print("[+] Starting Controller Bot...")
     await bot_client.start(bot_token=BOT_TOKEN)
