@@ -17,9 +17,14 @@ OWNER_ID = int(os.environ.get("OWNER_ID", 0))
 RAW_SESSIONS = os.environ.get("STRING_SESSIONS", "")
 CONFIG_FILE = "bot_data.json"
 
+# Settings
+COOLDOWN_TIME = 10 # Seconds (সাধারণ ইউজারের জন্য স্প্যাম লিমিট)
+AUTO_DELETE_DELAY = 60 # Seconds (মেসেজ ডিলিট হওয়ার সময়সীমা)
+
 start_time = time.time()
 login_temp = {"phone": None, "client": None}
-USER_STATES = {}  # Tracks all active userbot sessions dynamically
+USER_STATES = {}
+USER_COOLDOWNS = {} # Tracks user command usage timestamps
 
 # --- Database Management ---
 def load_data():
@@ -48,7 +53,7 @@ class RenderServer(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"HyperEngine Engine Multi-Session Service Online")
+        self.wfile.write(b"HyperEngine Active")
     def log_message(self, *args): pass
 
 def run_web_server():
@@ -56,14 +61,13 @@ def run_web_server():
     try:
         HTTPServer(('0.0.0.0', port), RenderServer).serve_forever()
     except Exception as e:
-        print(f"[-] Web Server Error: {e}")
+        pass
 
 def get_uptime():
     uptime_sec = int(time.time() - start_time)
     mins, secs = divmod(uptime_sec, 60)
     hours, mins = divmod(mins, 60)
     days, hours = divmod(hours, 24)
-    
     parts = []
     if days > 0: parts.append(f"{days}d")
     if hours > 0: parts.append(f"{hours}h")
@@ -78,48 +82,8 @@ def setup_master_bot(bot_client):
     @bot_client.on(events.NewMessage(pattern='/start'))
     async def b_start(event):
         if event.sender_id != OWNER_ID: return
-        await event.reply(
-            "⚙️ **Hyperbot Controller Hub Active**\n\n"
-            "💬 To log in a new account, send the international phone number directly (e.g., `+88017...`)\n"
-            "💬 To view available management commands, type: `/bothelp`"
-        )
+        await event.reply("⚙️ **Hyperbot Controller Active**\n💬 Send phone number (`+88017...`) to login.")
 
-    @bot_client.on(events.NewMessage(pattern='/bothelp'))
-    async def b_help(event):
-        if event.sender_id != OWNER_ID: return
-        await event.reply(
-            "🤖 **Master Controller Commands:**\n\n"
-            "1. `/start` - Boot control panel\n"
-            "2. `/bothelp` - Show this menu\n"
-            "3. `/list` - Live status of all logged accounts\n"
-            "4. `/reset` - Clear current logging state\n"
-            "5. `/stats` - Show combined active count and global runtime"
-        )
-
-    @bot_client.on(events.NewMessage(pattern='/list'))
-    async def b_list(event):
-        if event.sender_id != OWNER_ID: return
-        if not USER_STATES: return await event.reply("❌ No active userbot sessions connected.")
-        msg = "📋 **Connected Accounts Matrix:**\n\n"
-        for idx, (uid, data) in enumerate(USER_STATES.items(), 1):
-            st = "💤 AFK Mode" if data["is_afk"]() else "🟢 Active Online"
-            msg += f"{idx}. 👤 **{data['name']}** (`{uid}`) - Status: {st}\n"
-        await event.reply(msg)
-
-    @bot_client.on(events.NewMessage(pattern='/reset'))
-    async def b_reset(event):
-        if event.sender_id != OWNER_ID: return
-        login_temp["phone"] = None
-        if login_temp["client"]: 
-            await login_temp["client"].disconnect()
-        await event.reply("🔄 Live authorization memory flushed successfully.")
-
-    @bot_client.on(events.NewMessage(pattern='/stats'))
-    async def b_stats(event):
-        if event.sender_id != OWNER_ID: return
-        await event.reply(f"📊 **Total Active Sessions Running:** `{len(USER_STATES)}` Accounts\n⏱ **Global Uptime:** `{get_uptime()}`")
-
-    # --- Secure OTP & 2FA Extraction System ---
     @bot_client.on(events.NewMessage)
     async def b_login_engine(event):
         if event.sender_id != OWNER_ID or event.text.startswith('/'): return
@@ -127,15 +91,15 @@ def setup_master_bot(bot_client):
 
         if text.startswith('+') and login_temp["phone"] is None:
             login_temp["phone"] = text
-            await event.reply("⏳ Sending OTP authorization request code...")
+            await event.reply("⏳ Sending OTP...")
             try:
                 login_temp["client"] = TelegramClient(StringSession(), API_ID, API_HASH)
                 await login_temp["client"].connect()
                 await login_temp["client"].send_code_request(login_temp["phone"])
-                await event.reply("📩 Code dispatched. Reply back strictly using format: `code 12345`")
+                await event.reply("📩 Send code as: `code 12345`")
             except Exception as e:
                 login_temp["phone"] = None
-                await event.reply(f"❌ API Request Blocked: {e}")
+                await event.reply(f"❌ Error: {e}")
 
         elif text.startswith('code ') and login_temp["phone"] is not None:
             code_val = text.split(' ')[1]
@@ -143,10 +107,10 @@ def setup_master_bot(bot_client):
                 await login_temp["client"].sign_in(login_temp["phone"], code_val)
                 await finalize_bot_login(event)
             except SessionPasswordNeededError:
-                await event.reply("🔐 Two-Step Verification (2FA) detected. Reply using format: `pass your_password`")
+                await event.reply("🔐 2FA detected. Send password as: `pass your_password`")
             except Exception as e:
                 login_temp["phone"] = None
-                await event.reply(f"❌ Login Failed: {e}")
+                await event.reply(f"❌ Error: {e}")
 
         elif text.startswith('pass ') and login_temp["phone"] is not None:
             pwd_val = text.replace('pass ', '').strip()
@@ -154,24 +118,13 @@ def setup_master_bot(bot_client):
                 await login_temp["client"].sign_in(password=pwd_val)
                 await finalize_bot_login(event)
             except Exception as e:
-                await event.reply(f"❌ 2FA Authentication Failed: {e}")
+                await event.reply(f"❌ Error: {e}")
 
 async def finalize_bot_login(event):
     me = await login_temp["client"].get_me()
     string_generated = login_temp["client"].session.save()
-    
-    existing_raw = RAW_SESSIONS + "," if RAW_SESSIONS else ""
-    updated_env_string = f"{existing_raw}{string_generated}"
-    
-    await event.reply(
-        f"🎉 **Session Authentication Successful for {me.first_name}!**\n\n"
-        f"📋 **Generated Telethon String Session Key:**\n"
-        f"`{string_generated}`\n\n"
-        f"⚙️ **Updated Render Environment Block:**\n"
-        f"Go to your Render environment configuration settings, clear the old value of `STRING_SESSIONS` and paste this full sequence below to preserve data on rebuilds:\n\n"
-        f"`{updated_env_string}`"
-    )
-    # Automatically register dynamically to current loop
+    updated_env = f"{RAW_SESSIONS},{string_generated}" if RAW_SESSIONS else string_generated
+    await event.reply(f"🎉 **Login Success: {me.first_name}**\n\n`{string_generated}`\n\nUpdate `STRING_SESSIONS` in Render.")
     register_userbot_handlers(login_temp["client"], me)
     login_temp["phone"] = None
 
@@ -195,28 +148,26 @@ def register_userbot_handlers(client, me):
         text = event.text.strip()
         sender_id = event.sender_id
 
-        # 1. AFK Auto-Responder
+        # 1. AFK Handling
         if afk_state["is_afk"] and sender_id != uid and sender_id not in bot_data["banned_users"]:
             if event.is_private or event.mentioned:
-                await event.reply(f"💤 **[Auto-Reply]**\n{bot_data['afk_msg']}")
+                await event.reply(f"💤 **[AFK Auto-Reply]**\n{bot_data['afk_msg']}")
         
-        # 2. Dynamic AFK Eraser
         if afk_state["is_afk"] and sender_id == uid:
             if not text.lower().startswith((".setafk", "!setafk", "/setafk")):
                 afk_state["is_afk"] = False
-                msg = await event.respond("⚡ **AFK status automatically structuralized to Offline. Welcome back.**")
-                await asyncio.sleep(2)
+                msg = await event.respond("⚡ **AFK Disabled.**")
+                await asyncio.sleep(3)
                 await msg.delete()
 
-        # 3. Precision Custom Auto-Reply Filters
+        # 2. Custom Auto-Reply Filters
         if sender_id != uid and sender_id not in bot_data["banned_users"]:
             lower_text = text.lower()
             for trigger, response in bot_data["triggers"].items():
                 if trigger in lower_text:
-                    await event.reply(response)
-                    return 
+                    return await event.reply(response)
 
-        # 4. Advanced Production Level Command Parsing Engine (Multi-line + Username Bypass)
+        # 3. Command Parsing Engine
         match = re.match(r'^([.!/])?([a-zA-Z0-9_]+)(?:@[a-zA-Z0-9_]+)?(?:\s+(.*))?$', text, re.DOTALL)
         if not match: return
         
@@ -228,50 +179,83 @@ def register_userbot_handlers(client, me):
         if not await is_authorized(event, cmd_name): return
 
         is_owner = (sender_id == uid)
+
+        # 4. Anti-Spam / Cooldown Check (Only for non-owners)
+        if not is_owner:
+            last_used = USER_COOLDOWNS.get(sender_id, 0)
+            time_passed = time.time() - last_used
+            if time_passed < COOLDOWN_TIME:
+                wait_time = int(COOLDOWN_TIME - time_passed)
+                spam_msg = await event.reply(f"⏳ **Net, please wait {wait_time} seconds before using this command again.**")
+                await asyncio.sleep(5)
+                return await spam_msg.delete()
+            USER_COOLDOWNS[sender_id] = time.time()
         
-        # --- CORE WORKFLOW LOGIC ---
+        # --- COMMAND PROCESSING ---
+        output_msg = None
+
         if cmd_name == "ping":
             start = time.time()
-            msg = await event.reply("`Processing Latency Metrics...`") if not is_owner else await event.edit("`Processing Latency Metrics...`")
+            msg = await event.reply("`Processing...`") if not is_owner else await event.edit("`Processing...`")
             end = time.time()
-            await msg.edit(f" ** 🎯 Pong! :** ⏱️`{(end - start) * 1000:.2f}ms`")
+            latency = int((end - start) * 1000)
+            status = "🟢 Excellent" if latency < 150 else ("🟡 Average" if latency < 400 else "🔴 Poor")
+            
+            output = (
+                f"🏓 **Pong!**\n\n"
+                f"🧭 **Ping:** `{latency} ms`\n"
+                f"📶 **Status:** {status}\n\n"
+                f"📝 *Note: This ping shows exact TBC processing time.*\n"
+                f"🗑 *This message will be deleted after {AUTO_DELETE_DELAY} seconds.*"
+            )
+            output_msg = await msg.edit(output)
 
         elif cmd_name == "alive":
-            uptime = get_uptime()
-            alive_msg = (
-                f"▫️ ** Identity:** {me.first_name}\n"
-                f"▫️ **Uptime:** `{uptime}`"
+            output = (
+                f"⚡ **System Status:**\n\n"
+                f"👤 **Node Identity:** {me.first_name}\n"
+                f"⏱ **System Uptime:** `{get_uptime()}`\n"
+                f"🛡 **Engine:** Secure Multi-Session Matrix\n\n"
+                f"🗑 *This message will be deleted after {AUTO_DELETE_DELAY} seconds.*"
             )
-            await event.reply(alive_msg) if not is_owner else await event.edit(alive_msg)
+            output_msg = await event.reply(output) if not is_owner else await event.edit(output)
 
         elif cmd_name == "id":
-            id_msg = f"🆔 **Current Space ID:** `{sender_id}`\n💬 **Global Context Chat ID:** `{event.chat_id}`"
+            output = f"🆔 **User ID:** `{sender_id}`\n💬 **Chat ID:** `{event.chat_id}`"
             if event.is_reply:
                 rep = await event.get_reply_message()
-                id_msg += f"\n🎯 **Target Target ID:** `{rep.sender_id}`"
-            await event.reply(id_msg) if not is_owner else await event.edit(id_msg)
+                output += f"\n🎯 **Replied User ID:** `{rep.sender_id}`"
+            output += f"\n\n🗑 *Auto-deleting in {AUTO_DELETE_DELAY}s.*"
+            output_msg = await event.reply(output) if not is_owner else await event.edit(output)
 
         elif cmd_name == "help":
-            help_msg = (
-                "⚙️ **Hyperbot Production System Control Center** ⚙️\n\n"
-                "**🌐 Global Public Matrix Commands:**\n"
-                "▫️ `ping` - Returns exact socket latency execution window\n"
-                "▫️ `alive` - Verifies architecture runtime parameters\n"
-                "▫️ `id` - Structuralizes unique context IDs\n"
-                "▫️ `help` - Deploys this configuration control center map\n\n"
-                "**👑 Security Administration Commands (Owner Privileged):**\n"
-                "▫️ `!addcmd [cmd]` - White-lists selected commands for public use profiles\n"
-                "▫️ `!remcmd [cmd]` - Hard-locks commands from public interaction matrices\n"
-                "▫️ `!ban [user/reply]` - Access-denies target from engine interactions\n"
-                "▫️ `!unban [user/reply]` - Drops database lock on selected entity\n"
-                "▫️ `!setreply trigger | message` - Maps data text lines to reactive words\n"
-                "▫️ `!delreply trigger` - Drops specified trigger profile\n"
-                "▫️ `!setafk [message]` - Maps multi-line block responses to auto-reply frames\n\n"
-                "**🛠 Execution Optimization Profiles:**\n"
-                "▫️ `!purge` (Reply Target) - Flushes database records upwards safely\n"
-                "▫️ `!userinfo` (Reply/Username) - Resolves structural target parameters"
-            )
-            await event.reply(help_msg) if not is_owner else await event.edit(help_msg)
+            if is_owner:
+                # Owner Help Menu (Full Access)
+                output = (
+                    "⚙️ **Owner Control Panel** ⚙️\n\n"
+                    "**🌐 Public Commands:** `ping`, `alive`, `id`, `help`\n"
+                    "**🛡 Access Control:**\n"
+                    "▫️ `!addcmd [cmd]` - Make command public\n"
+                    "▫️ `!remcmd [cmd]` - Make command private\n"
+                    "▫️ `!ban / !unban [user/reply]` - Manage access\n"
+                    "**⚙️ Utility:**\n"
+                    "▫️ `!setreply trigger | text` - Set auto-reply\n"
+                    "▫️ `!delreply trigger` - Delete auto-reply\n"
+                    "▫️ `!setafk [text]` - Enable AFK\n"
+                    "▫️ `!purge` (Reply) - Clear messages\n"
+                    "▫️ `!userinfo` - Get user details\n\n"
+                    f"🗑 *Auto-deleting in {AUTO_DELETE_DELAY}s.*"
+                )
+            else:
+                # Regular User Help Menu (Dynamic based on allowed commands)
+                allowed = "\n".join([f"▫️ `{cmd}`" for cmd in bot_data["public_cmds"]])
+                output = (
+                    "🌐 **Available Public Commands:**\n\n"
+                    f"{allowed}\n\n"
+                    f"📝 *Note: You can only use the commands listed above.*\n"
+                    f"🗑 *Auto-deleting in {AUTO_DELETE_DELAY}s.*"
+                )
+            output_msg = await event.reply(output) if not is_owner else await event.edit(output)
 
         # --- EXCLUSIVE SYSTEM OPERATOR MANAGEMENT COMMAND MODULES ---
         if is_owner:
@@ -279,60 +263,56 @@ def register_userbot_handlers(client, me):
                 if args and args not in bot_data["public_cmds"]:
                     bot_data["public_cmds"].append(args.lower())
                     save_data(bot_data)
-                    await event.edit(f"✅ Protocol access configured. `{args}` is now interactive globally.")
+                    output_msg = await event.edit(f"✅ `{args}` is now available for public users.\n🗑 *Auto-deleting in 5s.*")
+                    AUTO_DELETE_DELAY = 5 # Force quick delete for config commands
                 else:
-                    await event.edit("⚠️ Parameter resolution error: invalid or existing string structure.")
+                    await event.edit("⚠️ Invalid or existing command.")
 
             elif cmd_name == "remcmd":
                 if args and args in bot_data["public_cmds"]:
                     bot_data["public_cmds"].remove(args.lower())
                     save_data(bot_data)
-                    await event.edit(f"🚫 Protocol locked. `{args}` stripped from public arrays.")
+                    output_msg = await event.edit(f"🚫 `{args}` hidden from public users.\n🗑 *Auto-deleting in 5s.*")
+                    AUTO_DELETE_DELAY = 5
 
             elif cmd_name == "ban":
-                target = args
-                if event.is_reply:
-                    target = (await event.get_reply_message()).sender_id
+                target = args if not event.is_reply else (await event.get_reply_message()).sender_id
                 if target and target not in bot_data["banned_users"]:
                     bot_data["banned_users"].append(target)
                     save_data(bot_data)
-                    await event.edit(f"🔨 Firewall locked entity profile `{target}` safely.")
+                    await event.edit(f"🔨 Entity `{target}` banned.")
 
             elif cmd_name == "unban":
-                target = args
-                if event.is_reply:
-                    target = (await event.get_reply_message()).sender_id
+                target = args if not event.is_reply else (await event.get_reply_message()).sender_id
                 if target in bot_data["banned_users"]:
                     bot_data["banned_users"].remove(target)
                     save_data(bot_data)
-                    await event.edit(f"✅ Drop-lock structural sequence completed for entity `{target}`.")
+                    await event.edit(f"✅ Entity `{target}` unbanned.")
 
             elif cmd_name == "setreply":
                 if "|" in args:
                     trigger, response = map(str.strip, args.split("|", 1))
-                    if trigger and response:
-                        bot_data["triggers"][trigger.lower()] = response
-                        save_data(bot_data)
-                        await event.edit(f"✅ **Database Entry Structuralized.**\n**Target String:** `{trigger}`\n**Response Map Set Completely.**")
+                    bot_data["triggers"][trigger.lower()] = response
+                    save_data(bot_data)
+                    await event.edit(f"✅ **Trigger Set:** `{trigger}`")
                 else:
-                    await event.edit("⚠️ **Syntax Parse Fault:** Execute via pattern: `!setreply text_key | Multi-line text block`")
+                    await event.edit("⚠️ Use: `!setreply text | response`")
 
             elif cmd_name == "delreply":
                 if args.lower() in bot_data["triggers"]:
                     del bot_data["triggers"][args.lower()]
                     save_data(bot_data)
-                    await event.edit(f"🗑 **Data Matrix Mapping Erased:** `{args}`")
+                    await event.edit(f"🗑 **Trigger Deleted:** `{args}`")
 
             elif cmd_name == "setafk":
                 afk_state["is_afk"] = True
                 if args:
                     bot_data["afk_msg"] = args
                     save_data(bot_data)
-                await event.edit(f"💤 **Auto-Reply Status Set to AFK.**\n**Preserved Message Structural Frame Configuration Loaded Safely.**")
+                await event.edit(f"💤 **AFK Enabled.**")
 
             elif cmd_name == "purge":
-                if not event.is_reply:
-                    return await event.edit("⚠️ System validation requires a valid reference message to lock target window boundary.")
+                if not event.is_reply: return await event.edit("⚠️ Reply to a message.")
                 rep = await event.get_reply_message()
                 purge_bucket = []
                 async for m in client.iter_messages(event.chat_id, min_id=rep.id - 1):
@@ -340,50 +320,48 @@ def register_userbot_handlers(client, me):
                     if len(purge_bucket) >= 100:
                         await client.delete_messages(event.chat_id, purge_bucket)
                         purge_bucket = []
-                if purge_bucket:
-                    await client.delete_messages(event.chat_id, purge_bucket)
-                msg = await event.respond("🧹 **Matrix Database Purge Protocol Executed Successfully.**")
-                await asyncio.sleep(2)
-                await msg.delete()
+                if purge_bucket: await client.delete_messages(event.chat_id, purge_bucket)
+                output_msg = await event.respond("🧹 **Purge Complete.**")
+                AUTO_DELETE_DELAY = 3 # Quick delete for purge notification
 
             elif cmd_name == "userinfo":
-                target = args
-                if event.is_reply:
-                    target = (await event.get_reply_message()).sender_id
-                if not target:
-                    return await event.edit("⚠️ Target tracking requires valid handle signature parameters.")
+                target = args if not event.is_reply else (await event.get_reply_message()).sender_id
+                if not target: return await event.edit("⚠️ Provide target.")
                 try:
                     user = await client.get_entity(target)
                     info = (
-                        f"👤 **Entity Diagnostic Record:**\n\n"
-                        f"**True Handle First Name:** {user.first_name} {user.last_name or ''}\n"
-                        f"**Database Array ID Key:** `{user.id}`\n"
-                        f"**Global Network Handle Alias:** @{user.username if user.username else 'N/A'}\n"
-                        f"**Automated Engine Bot Profile:** {'Yes' if user.bot else 'No'}\n"
-                        f"**Malicious Script / Scam Profile:** {'Yes' if user.scam else 'No'}"
+                        f"👤 **Name:** {user.first_name}\n"
+                        f"**ID:** `{user.id}`\n"
+                        f"**Username:** @{user.username or 'N/A'}\n"
                     )
                     await event.edit(info)
                 except Exception as e:
-                    await event.edit(f"❌ **Failed to structuralize details block from API:** `{e}`")
+                    await event.edit(f"❌ **Error:** `{e}`")
+
+        # --- AUTO DELETE ENGINE ---
+        if output_msg:
+            # Create a non-blocking background task to delete the message
+            async def delete_later(msg, delay):
+                await asyncio.sleep(delay)
+                try: await msg.delete()
+                except: pass
+            
+            # Using actual delay value for specific commands (e.g. 5s for addcmd, 60s for ping)
+            current_delay = 5 if is_owner and cmd_name in ["addcmd", "remcmd", "purge"] else AUTO_DELETE_DELAY
+            asyncio.create_task(delete_later(output_msg, current_delay))
 
 # ==========================================
-#  🔄 ASYNCHRONOUS SYSTEM ORCHESTRATION BOOT
+#  🔄 SYSTEM ORCHESTRATION BOOT
 # ==========================================
 async def main():
-    print("[+] Launching Multi-Session Engine Core Network...")
     threading.Thread(target=run_web_server, daemon=True).start()
+    
+    if BOT_TOKEN:
+        bot_client = TelegramClient('master_controller_hub', API_ID, API_HASH)
+        setup_master_bot(bot_client)
+        await bot_client.start(bot_token=BOT_TOKEN)
+        print("[+] Controller Hub Online.")
 
-    # Phase 1: Initialize Master Controller Bot
-    if not BOT_TOKEN:
-        print("[-] TERMINAL BLOCKER: BOT_TOKEN Environment Variable Missing.")
-        return
-
-    bot_client = TelegramClient('master_controller_hub', API_ID, API_HASH)
-    setup_master_bot(bot_client)
-    await bot_client.start(bot_token=BOT_TOKEN)
-    print("[+] Controller Bot Hub Authentication Protocol Verified.")
-
-    # Phase 2: Orchestrate Multi-Account String Sessions Safely
     if RAW_SESSIONS:
         session_list = [s.strip() for s in RAW_SESSIONS.split(",") if s.strip()]
         for idx, session_key in enumerate(session_list):
@@ -393,16 +371,12 @@ async def main():
                 if await ub_client.is_user_authorized():
                     me = await ub_client.get_me()
                     register_userbot_handlers(ub_client, me)
-                    print(f"[+] Operational Account Linked Node {idx+1}: {me.first_name}")
-                else:
-                    print(f"[-] Defunct Node Session Matrix Index: {idx+1}")
+                    print(f"[+] Operational Account: {me.first_name}")
             except Exception as e:
-                print(f"[-] Operational Failure Bootstrapping Session Node {idx+1}: {e}")
-    else:
-        print("[!] NOTICE: No default multi-session string tokens loaded into environment matrix arrays.")
+                print(f"[-] Node Failure: {e}")
 
-    await bot_client.run_until_disconnected()
+    await asyncio.Event().wait()
 
 if __name__ == '__main__':
     asyncio.run(main())
-    
+            
