@@ -259,7 +259,7 @@ async def main():
         return
 
     print("[+] Initializing Engine...")
-    client = TelegramClient(StringSession(RAW_SESSION), API_ID, API_HASH)
+    client = TelegramClient(StringSession(RAW_SESSIONS), API_ID, API_HASH)
     
     await client.connect()
     if not await client.is_user_authorized():
