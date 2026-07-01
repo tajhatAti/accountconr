@@ -193,16 +193,32 @@ def register_userbot_handlers(client, me):
         
                 # --- COMMAND PROCESSING ---
         output_msg = None
-
         if cmd_name == "ping":
             start = time.time()
             msg = await event.reply("`Processing...`")
             end = time.time()
             latency = int((end - start) * 1000)
             status = "🟢 Excellent" if latency < 150 else ("🟡 Average" if latency < 400 else "🔴 Poor")
-            output = f"🏓 **Pong!**\n\n🧭 **Ping:** `{latency} ms`\n📶 **Status:** {status}"
+            
+            output = (
+                f"🏓 **Pong!**\n\n"
+                f"🧭 **Ping:** `{latency} ms`\n"
+                f"📶 **Status:** {status}\n\n"
+                f"📝 *Note: This ping shows exact TBC processing time.*\n"
+                f"🗑 *This message will be deleted after 6 seconds.*"
+            )
             output_msg = await msg.edit(output)
-
+            
+            # শুধুমাত্র পিং কমান্ডের জন্য ৬ সেকেন্ডের স্পেশাল অটো-ডিলিট লজিক
+            async def delete_ping(m):
+                await asyncio.sleep(6)
+                try: await m.delete()
+                except: pass
+            asyncio.create_task(delete_ping(output_msg))
+            
+            # নিচের লাইনে None করে দেওয়া হচ্ছে যেন গ্লোবাল অটো-ডিলিট ইঞ্জিন এটাকে আবার ডিলিট করতে না যায়
+            output_msg = None
+                
         elif cmd_name == "alive":
             output = f"⚡ **System Status:** Online\n⏱ **Uptime:** `{get_uptime()}`"
             output_msg = await event.reply(output) if not is_owner else await event.edit(output)
