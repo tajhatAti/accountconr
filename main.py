@@ -198,20 +198,20 @@ def register_userbot_handlers(client, me):
             msg = await event.reply("`Processing...`")
             end = time.time()
             latency = int((end - start) * 1000)
-            status = "🟢 Excellent" if latency < 150 else ("🟡 Average" if latency < 400 else "🔴 Poor")
+            status = "🟢 Excellent" if latency < 150 else ("🟡 Average" if latency < 600 else "🔴 Poor")
             
             output = (
                 f"🏓 **Pong!**\n\n"
                 f"🧭 **Ping:** `{latency} ms`\n"
                 f"📶 **Status:** {status}\n\n"
-                f"📝 *Note: This ping shows exact TBC processing time.*\n"
-                f"🗑 *This message will be deleted after 6 seconds.*"
+                f"📝 **Note: This ping shows TBC processing time👍.**\n"
+                f"🗑 **This message will be deleted after 6 seco nds.**"
             )
             output_msg = await msg.edit(output)
             
             # শুধুমাত্র পিং কমান্ডের জন্য ৬ সেকেন্ডের স্পেশাল অটো-ডিলিট লজিক
             async def delete_ping(m):
-                await asyncio.sleep(6)
+                await asyncio.sleep(4)
                 try: await m.delete()
                 except: pass
             asyncio.create_task(delete_ping(output_msg))
