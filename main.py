@@ -191,74 +191,45 @@ def register_userbot_handlers(client, me):
                 return await spam_msg.delete()
             USER_COOLDOWNS[sender_id] = time.time()
         
-        # --- COMMAND PROCESSING ---
+                # --- COMMAND PROCESSING ---
         output_msg = None
 
-       if cmd_name == "ping":
+        if cmd_name == "ping":
             start = time.time()
-            # সবক্ষেত্রে আগে একটা রিপ্লাই পাঠাবে, তারপর সেটা এডিট করবে (এটা সবচেয়ে নিরাপদ)
             msg = await event.reply("`Processing...`")
             end = time.time()
             latency = int((end - start) * 1000)
-            
             status = "🟢 Excellent" if latency < 150 else ("🟡 Average" if latency < 400 else "🔴 Poor")
-            
-            output = (
-                f"🏓 **Pong!**\n\n"
-                f"🧭 **Ping:** `{latency} ms`\n"
-                f"📶 **Status:** {status}\n\n"
-                f"📝 *Note: This ping shows exact TBC processing time.*\n"
-                f"🗑 *This message will be deleted after {AUTO_DELETE_DELAY} seconds.*"
-            )
+            output = f"🏓 **Pong!**\n\n🧭 **Ping:** `{latency} ms`\n📶 **Status:** {status}"
             output_msg = await msg.edit(output)
 
-
         elif cmd_name == "alive":
-            output = (
-                f"⚡ **System Status:**\n\n"
-                f"👤 **Node Identity:** {me.first_name}\n"
-                f"⏱ **System Uptime:** `{get_uptime()}`\n"
-                f"🛡 **Engine:** Secure Multi-Session Matrix\n\n"
-                f"🗑 *This message will be deleted after {AUTO_DELETE_DELAY} seconds.*"
-            )
+            output = f"⚡ **System Status:** Online\n⏱ **Uptime:** `{get_uptime()}`"
             output_msg = await event.reply(output) if not is_owner else await event.edit(output)
 
         elif cmd_name == "id":
             output = f"🆔 **User ID:** `{sender_id}`\n💬 **Chat ID:** `{event.chat_id}`"
-            if event.is_reply:
-                rep = await event.get_reply_message()
-                output += f"\n🎯 **Replied User ID:** `{rep.sender_id}`"
-            output += f"\n\n🗑 *Auto-deleting in {AUTO_DELETE_DELAY}s.*"
             output_msg = await event.reply(output) if not is_owner else await event.edit(output)
 
         elif cmd_name == "help":
-            if is_owner:
-                # Owner Help Menu (Full Access)
-                output = (
-                    "⚙️ **Owner Control Panel** ⚙️\n\n"
-                    "**🌐 Public Commands:** `ping`, `alive`, `id`, `help`\n"
-                    "**🛡 Access Control:**\n"
-                    "▫️ `!addcmd [cmd]` - Make command public\n"
-                    "▫️ `!remcmd [cmd]` - Make command private\n"
-                    "▫️ `!ban / !unban [user/reply]` - Manage access\n"
-                    "**⚙️ Utility:**\n"
-                    "▫️ `!setreply trigger | text` - Set auto-reply\n"
-                    "▫️ `!delreply trigger` - Delete auto-reply\n"
-                    "▫️ `!setafk [text]` - Enable AFK\n"
-                    "▫️ `!purge` (Reply) - Clear messages\n"
-                    "▫️ `!userinfo` - Get user details\n\n"
-                    f"🗑 *Auto-deleting in {AUTO_DELETE_DELAY}s.*"
-                )
-            else:
-                # Regular User Help Menu (Dynamic based on allowed commands)
-                allowed = "\n".join([f"▫️ `{cmd}`" for cmd in bot_data["public_cmds"]])
-                output = (
-                    "🌐 **Available Public Commands:**\n\n"
-                    f"{allowed}\n\n"
-                    f"📝 *Note: You can only use the commands listed above.*\n"
-                    f"🗑 *Auto-deleting in {AUTO_DELETE_DELAY}s.*"
-                )
-            output_msg = await event.reply(output) if not is_owner else await event.edit(output)
+            try:
+                if is_owner:
+                    output = "⚙️ **Owner Control Panel**\n\nPublic: `ping`, `alive`, `id`, `help`\nAdmin: `!addcmd`, `!remcmd`, `!ban`, `!purge`"
+                else:
+                    allowed = "\n".join([f"▫️ `{cmd}`" for cmd in bot_data["public_cmds"]])
+                    output = f"🌐 **Available Commands:**\n\n{allowed}"
+                output_msg = await event.reply(output) if not is_owner else await event.edit(output)
+            except Exception as e:
+                print(f"Error in help: {e}")
+
+        # --- AUTO DELETE ENGINE ---
+        if output_msg:
+            async def auto_delete(msg):
+                await asyncio.sleep(AUTO_DELETE_DELAY)
+                try: await msg.delete()
+                except: pass
+            asyncio.create_task(auto_delete(output_msg))
+
 
         # --- EXCLUSIVE SYSTEM OPERATOR MANAGEMENT COMMAND MODULES ---
         if is_owner:
