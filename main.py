@@ -234,7 +234,7 @@ def register_userbot_handlers(client, me):
             start = time.time()
             msg = await event.reply("`Processing Latency Metrics...`") if not is_owner else await event.edit("`Processing Latency Metrics...`")
             end = time.time()
-            await msg.edit(f" ** 🎯 Pong!/n:** ⏱️`{(end - start) * 1000:.2f}ms`")
+            await msg.edit(f" ** 🎯 Pong! :** ⏱️`{(end - start) * 1000:.2f}ms`")
 
         elif cmd_name == "alive":
             uptime = get_uptime()
