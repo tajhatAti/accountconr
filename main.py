@@ -195,7 +195,7 @@ def register_userbot_handlers(client, me):
         output_msg = None
         if cmd_name == "ping":
             start = time.time()
-            msg = await event.reply("`Processing...`")
+            msg = await event.reply("`🪭 Checking ping's.🟢🔴🟡`")
             end = time.time()
             latency = int((end - start) * 1000)
             status = "🟢 Excellent" if latency < 150 else ("🟡 Average" if latency < 600 else "🔴 Poor")
