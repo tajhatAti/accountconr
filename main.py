@@ -2,257 +2,281 @@ import os
 import asyncio
 import threading
 import time
-import json
-import base64
-import random
 import re
-from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
-
-# Telethon & Third-party Imports
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
-from telethon.tl.functions.account import UpdateProfileRequest, UpdateUsernameRequest
-from telethon.tl.functions.channels import EditBannedRequest
-from telethon.tl.types import ChatBannedRights
-from deep_translator import GoogleTranslator
+from telethon.tl.functions.account import UpdateProfileRequest
+from telethon.tl.functions.users import GetFullUserRequest
 
-# --- কনফিগারেশন ও এনভায়রনমেন্ট ---
+# --- কোর কনফিগারেশন (Render Env Variables থেকে আসবে) ---
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 OWNER_ID = int(os.environ.get("OWNER_ID", 0))
-RAW_SESSIONS = os.environ.get("STRING_SESSIONS", "")
+RAW_SESSIONS = os.environ.get("STRING_SESSIONS", "")  # কমা দিয়ে আলাদা করা সেশনসমূহ
 
-USER_STATES = {} 
-bot_client = None  
+# মাল্টিপল ক্লায়েন্ট ও স্টেট ট্র্যাকিং ডিকশনারি
+USER_STATES = {}  # {user_id: {"is_afk": False, "reason": "", "client": client_instance, "name": ""}}
+bot_client = TelegramClient('helper_bot_auth', API_ID, API_HASH)
 start_time = time.time()
+
+# নতুন লগইন সেশনের জন্য সাময়িক গ্লোবাল ট্র্যাকার
 login_temp = {"phone": None, "client": None}
 
-# --- JSON ডাটাবেস (কাস্টম সেটিংস সেভ রাখার জন্য) ---
-CONFIG_FILE = "bot_config.json"
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
-    return {"public_cmds": [], "banned_users": [], "triggers": {}, "afk_msg": None}
-
-def save_config(data):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-bot_config = load_config()
-
-# --- ওয়েব সার্ভার ---
+# --- রেন্ডার হেলথ চেক ওয়েব সার্ভার ---
 class RenderServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"HyperEngine Bot Online")
+        self.wfile.write(b"Multi-Account Hybrid Engine is Running!")
     def log_message(self, *args): pass
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     HTTPServer(('0.0.0.0', port), RenderServer).serve_forever()
 
-# --- অথেন্টিকেশন চেকার ---
-def check_access(event, uid, cmd_name):
-    sender = event.sender_id
-    if sender == uid: return True
-    if sender in bot_config["banned_users"]: return False
-    if cmd_name in bot_config["public_cmds"]: return True
-    return False
+# ==========================================
+#  🤖 ক্যাটাগরি ১: হেল্পার বটের কমান্ডসমূহ (কন্ট্রোল প্যানেল)
+# ==========================================
 
-def setup_bot_handlers(client):
-    @client.on(events.NewMessage(pattern='/start'))
-    async def b_start(event):
-        if event.sender_id != OWNER_ID: return
-        await event.reply("⚙️ **কন্ট্রোলার প্যানেল সচল!**")
+@bot_client.on(events.NewMessage(pattern='/start'))
+async def bot_start(event):
+    if event.sender_id != OWNER_ID: return
+    guide = (
+        "👑 **মাল্টি-আইডি হাইব্রিড কন্ট্রোল প্যানেল**\n\n"
+        "📱 **নতুন আইডি যোগ করতে:** সরাসরি ফোন নাম্বার পাঠা (যেমন: `+88017XXXXXXXX`)\n"
+        "📊 `/list` - অ্যাক্টিভ সব পার্সোনাল আইডির লিস্ট ও স্ট্যাটাস\n"
+        "📢 `/broadcast [মেসেজ]` - সব আইডি থেকে একসাথে গ্রুপ/চ্যানেলে মেসেজ পাঠানো\n"
+        "🔄 `/reset` - লগইন প্রসেস আটকে গেলে ক্লিয়ার করার কমান্ড"
+    )
+    await event.reply(guide)
 
-    # (আগের কন্ট্রোলার কমান্ডগুলো এখানে থাকবে, জায়গা বাঁচানোর জন্য সংক্ষিপ্ত করা হলো)
-    # তুমি তোমার আগের কোডের প্যানেল ফিচারস এখানে যুক্ত রাখতে পারো।
-
-async def finalize_login(event):
-    me = await login_temp["client"].get_me()
-    ss = login_temp["client"].session.save()
-    register_userbot_handlers(login_temp["client"], me)
-    existing = RAW_SESSIONS + "," if RAW_SESSIONS else ""
-    await event.reply(f"🎉 **{me.first_name}** অনলাইন হয়েছে!\n\n`{existing}{ss}`")
+@bot_client.on(events.NewMessage(pattern='/reset'))
+async def bot_reset(event):
+    if event.sender_id != OWNER_ID: return
     login_temp["phone"] = None
+    if login_temp["client"]:
+        await login_temp["client"].disconnect()
+        login_temp["client"] = None
+    await event.reply("🔄 লগইন মেমোরি ক্লিয়ার করা হয়েছে। নতুন করে নাম্বার পাঠাতে পারিস।")
+
+@bot_client.on(events.NewMessage(pattern='/list'))
+async def bot_list(event):
+    if event.sender_id != OWNER_ID: return
+    if not USER_STATES: return await event.reply("ℹ️ কোনো পার্সোনাল অ্যাকাউন্ট এখন লাইভ নেই।")
+    
+    status_text = "📊 **লাইভ অ্যাকাউন্ট সমূহের তালিকা:**\n\n"
+    for uid, data in USER_STATES.items():
+        afk_status = f"💤 AFK ({data['reason']})" if data['is_afk'] else "🟢 Active"
+        status_text += f"👤 **{data['name']}** (ID: `{uid}`)\n└ স্ট্যাটাস: {afk_status}\n\n"
+    await event.reply(status_text)
+
+@bot_client.on(events.NewMessage(pattern=r'/broadcast (.*)'))
+async def bot_broadcast(event):
+    if event.sender_id != OWNER_ID: return
+    msg = event.pattern_match.group(1)
+    if not USER_STATES: return await event.reply("❌ কোনো আইডি লগইন করা নেই।")
+    
+    await event.reply(f"📢 {len(USER_STATES)} টি অ্যাকাউন্ট থেকে ব্রডকাস্ট শুরু হচ্ছে...")
+    success = 0
+    for uid, data in USER_STATES.items():
+        try:
+            # ওনারের সেভড মেসেজে টেস্ট ব্রডকাস্ট (তুই চাইলে চ্যাট আইডি লুপ করতে পারিস)
+            await data["client"].send_message("me", f"📢 **[সব আইডি থেকে ব্রডকাস্ট]:** {msg}")
+            success += 1
+        except: pass
+    await event.reply(f"✅ ব্রডকাস্ট সম্পন্ন। সফল: {success}/{len(USER_STATES)}")
+
+# 🔐 বটের মাধ্যমে ওটিপি ভিত্তিক নতুন অ্যাকাউন্ট লগইন মেকানিজম
+@bot_client.on(events.NewMessage)
+async def bot_login_handler(event):
+    if event.sender_id != OWNER_ID or event.text.startswith('/'): return
+    text = event.text.strip()
+
+    if text.startswith('+') and login_temp["phone"] is None:
+        login_temp["phone"] = text
+        await event.reply("⏳ ওটিপি রিকোয়েস্ট পাঠানো হচ্ছে...")
+        try:
+            login_temp["client"] = TelegramClient(StringSession(), API_ID, API_HASH)
+            await login_temp["client"].connect()
+            await login_temp["client"].send_code_request(login_temp["phone"])
+            await event.reply("📩 কোড গেছে। এভাবে পাঠা: `code 12345`")
+        except Exception as e:
+            login_temp["phone"] = None
+            await event.reply(f"❌ ব্যর্থ: {e}")
+
+    elif text.startswith('code ') and login_temp["phone"] is not None:
+        code = text.split(' ')[1]
+        try:
+            await login_temp["client"].sign_in(login_temp["phone"], code)
+            me = await login_temp["client"].get_me()
+            ss = login_temp["client"].session.save()
+            
+            # মেমোরিতে রেজিস্টার করা
+            register_userbot_handlers(login_temp["client"], me)
+            await event.reply(f"🎉 **{me.first_name}** সফলভাবে লগইন হয়েছে!\n\n⚠️ **রেন্ডার পার্মানেন্ট ব্যাকআপ স্ট্রিং সেশন:**\n`{ss}`\n\n💡 একাধিক আইডি সচল রাখতে রেন্ডারের `STRING_SESSIONS` ভেরিয়েবলে কমা (,) দিয়ে এই স্ট্রিংটি যোগ করে দে।")
+            login_temp["phone"] = None
+        except SessionPasswordNeededError:
+            await event.reply("🔐 ২-স্টেপ পাসওয়ার্ড লাগবে। এভাবে পাঠা: `pass তোর_পাসওয়ার্ড`")
+        except Exception as e:
+            login_temp["phone"] = None
+            await event.reply(f"❌ ভুল কোড বা এরর: {e}")
+
+    elif text.startswith('pass ') and login_temp["phone"] is not None:
+        pwd = text.replace('pass ', '').strip()
+        try:
+            await login_temp["client"].sign_in(password=pwd)
+            me = await login_temp["client"].get_me()
+            ss = login_temp["client"].session.save()
+            register_userbot_handlers(login_temp["client"], me)
+            await event.reply(f"🎉 2FA ভেরিফাইড! **{me.first_name}** লাইভ।\n\n`{ss}`")
+            login_temp["phone"] = None
+        except Exception as e:
+            await event.reply(f"❌ পাসওয়ার্ড ভুল: {e}")
 
 # ==========================================
-#  👤 ইউজারবট ইঞ্জিন (কাস্টম কমান্ড ও রেস্ট্রিকশন সহ)
+#  👤 ক্যাটাগরি ২: পার্সোনাল আইডির নিজস্ব ফিচারসমূহ (Userbot)
 # ==========================================
+
 def register_userbot_handlers(client, me):
     uid = me.id
-    USER_STATES[uid] = {"is_afk": False, "client": client, "name": me.first_name}
+    USER_STATES[uid] = {"is_afk": False, "reason": "", "client": client, "name": me.first_name}
 
-    # --- মালিকের কাস্টমাইজেশন টুলস (পাবলিক নয়) ---
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!(add|rem) (.*)'))
-    async def u_cmd_manager(event):
-        action, cmd = event.pattern_match.group(1), event.pattern_match.group(2).lower()
-        if action == "add":
-            if cmd not in bot_config["public_cmds"]: bot_config["public_cmds"].append(cmd)
-            msg = f"✅ `{cmd}` সাধারণ ইউজারদের জন্য উন্মুক্ত করা হয়েছে।"
-        else:
-            if cmd in bot_config["public_cmds"]: bot_config["public_cmds"].remove(cmd)
-            msg = f"🚫 `{cmd}` সাধারণ ইউজারদের থেকে রিমুভ করা হয়েছে।"
-        save_config(bot_config)
-        await event.edit(msg)
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!banme(?:\s+(.*))?'))
-    async def u_ban_user(event):
-        target_id = None
-        if event.is_reply: target_id = (await event.get_reply_message()).sender_id
-        else: 
-            try: target_id = (await client.get_entity(event.pattern_match.group(1))).id
-            except: return await event.edit("❌ ইউজার পাওয়া যায়নি।")
-        
-        if target_id not in bot_config["banned_users"]:
-            bot_config["banned_users"].append(target_id)
-            save_config(bot_config)
-        await event.edit(f"🔨 ইউজার `{target_id}` কে বটের ব্যবহার থেকে ব্যান করা হয়েছে।")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!unbanme(?:\s+(.*))?'))
-    async def u_unban_user(event):
-        target_id = None
-        if event.is_reply: target_id = (await event.get_reply_message()).sender_id
-        else: 
-            try: target_id = (await client.get_entity(event.pattern_match.group(1))).id
-            except: return await event.edit("❌ ইউজার পাওয়া যায়নি।")
-        
-        if target_id in bot_config["banned_users"]:
-            bot_config["banned_users"].remove(target_id)
-            save_config(bot_config)
-        await event.edit(f"✅ ইউজার `{target_id}` কে আনব্যান করা হয়েছে।")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!setreply (.*?)\s*\|\s*(.*)'))
-    async def u_set_reply(event):
-        trigger = event.pattern_match.group(1).lower()
-        response = event.pattern_match.group(2)
-        bot_config["triggers"][trigger] = response
-        save_config(bot_config)
-        await event.edit(f"✅ ট্রিগার সেট করা হয়েছে:\n**When:** `{trigger}`\n**Reply:** `{response}`")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!delreply (.*)'))
-    async def u_del_reply(event):
-        trigger = event.pattern_match.group(1).lower()
-        if trigger in bot_config["triggers"]:
-            del bot_config["triggers"][trigger]
-            save_config(bot_config)
-            await event.edit(f"🗑️ `{trigger}` ট্রিগারটি ডিলিট করা হয়েছে।")
-        else: await event.edit("❌ ট্রিগারটি পাওয়া যায়নি।")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!setafk (.*)'))
-    async def u_set_afk(event):
-        bot_config["afk_msg"] = event.pattern_match.group(1)
-        save_config(bot_config)
-        USER_STATES[uid]["is_afk"] = True
-        await event.edit(f"💤 AFK মোড অন! কাস্টম মেসেজ সেট করা হয়েছে।")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!mute (\d+)([dhm])(?:\s+(.*))?'))
-    async def u_mute_timer(event):
-        amount, unit = int(event.pattern_match.group(1)), event.pattern_match.group(2)
-        target = event.pattern_match.group(3)
-        
-        if event.is_reply: target_entity = await event.get_reply_message()
-        elif target: target_entity = await client.get_entity(target)
-        else: return await event.edit("❌ ইউজার মেনশন বা রিপ্লাই করো।")
-        
-        target_id = target_entity.sender_id if event.is_reply else target_entity.id
-        
-        if unit == 'd': delta = timedelta(days=amount)
-        elif unit == 'h': delta = timedelta(hours=amount)
-        elif unit == 'm': delta = timedelta(minutes=amount)
-        
-        until = datetime.now() + delta
-        rights = ChatBannedRights(until_date=until, send_messages=True)
-        try:
-            await client(EditBannedRequest(event.chat_id, target_id, rights))
-            await event.edit(f"🔇 ইউজারকে {amount}{unit} এর জন্য মিউট করা হয়েছে।")
-        except Exception as e: await event.edit(f"❌ এরর বা এডমিন রাইটস নেই: {e}")
-
-    # --- কোর কমান্ডস (পাবলিক এক্সেস সাপোর্ট সহ) ---
-    # প্রিফিক্স ছাড়া বা প্রিফিক্স সহ কাজ করবে (যেমন: .ping, ping, !ping)
-    @client.on(events.NewMessage(pattern=r'(?i)^[.\/!]?(ping)$'))
-    async def u_ping(event):
-        if not check_access(event, uid, "ping"): return
-        t = time.time()
-        m = await event.reply("`Pinging...`") if event.sender_id != uid else await event.edit("`Pinging...`")
-        await m.edit(f"🎯 **Pong!**\n⏱️ `{(time.time() - t)*1000:.2f}ms`")
-
-    @client.on(events.NewMessage(pattern=r'(?i)^[.\/!]?(id)$'))
-    async def u_id(event):
-        if not check_access(event, uid, "id"): return
-        msg = f"👤 **ইউজার আইডি:** `{event.sender_id}`\n📍 **চ্যাট আইডি:** `{event.chat_id}`"
-        await event.reply(msg) if event.sender_id != uid else await event.edit(msg)
-
-    @client.on(events.NewMessage(pattern=r'(?i)^[.\/!]?(alive)$'))
+    # ১. এলাইভ (.alive)
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.alive'))
     async def u_alive(event):
-        if not check_access(event, uid, "alive"): return
-        msg = f"⚡ **হাইব্রিড ইঞ্জিন সচল!**\n⏱️ আপটাইম: `{int(time.time() - start_time)}s`"
-        await event.reply(msg) if event.sender_id != uid else await event.edit(msg)
+        ut = int(time.time() - start_time)
+        await event.edit(f"⚡ **[ {me.first_name} ] ইউজারবট প্রোফাইল অনলাইন!**\n⏱️ আপটাইম: `{ut}s`\n🎯 ইঞ্জিন: মাল্টি-কন্ট্রোল স্ট্যাবল")
 
-    # --- অটো রেসপন্স ও AFK (কাস্টম মেসেজ) ---
+    # ২. পিং (.ping)
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.ping'))
+    async def u_ping(event):
+        t1 = time.time()
+        await event.edit("`Ping...`")
+        await event.edit(f"🎯 **Pong!**\n⏱️ `{(time.time() - t1)*1000:.2f}ms`")
+
+    # ৩. এএফকে অন (.afk)
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.afk(?: |$)(.*)'))
+    async def u_afk(event):
+        reason = event.pattern_match.group(1) or "এখন ব্যস্ত আছি।"
+        USER_STATES[uid]["is_afk"] = True
+        USER_STATES[uid]["reason"] = reason
+        await event.edit(f"💤 **AFK মোড চালু হলো!**\n📝 কারণ: {reason}")
+
+    # ৪. আইডি চেক (.id)
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.id'))
+    async def u_id(event):
+        await event.edit(f"👤 তোর অ্যাকাউন্ট আইডি: `{uid}`\n📍 এই চ্যাটের আইডি: `{event.chat_id}`")
+
+    # ৫. বায়ো চেঞ্জ (.bio)
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.bio(?: |$)(.*)'))
+    async def u_bio(event):
+        nbio = event.pattern_match.group(1)
+        if not nbio: return await event.edit("❌ ফরম্যাট: `.bio তোর টেক্সট`")
+        try:
+            await client(UpdateProfileRequest(about=nbio))
+            await event.edit(f"✅ বায়ো পরিবর্তন সফল: `{nbio}`")
+        except Exception as e: await event.edit(f"❌ ভুল: {e}")
+
+    # ৬. সেভড মেসেজে পাঠানো (.save)
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.save'))
+    async def u_save(event):
+        if not event.is_reply: return await event.edit("❌ মেসেজে রিপ্লাই করে `.save` লেখ।")
+        reply = await event.get_reply_message()
+        await client.send_message("me", reply)
+        await event.edit("💾 **Saved Messages-এ রাখা হলো।**")
+
+    # ৭. ফরোয়ার্ড করা (.frwd)
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.frwd(?: |$)(.*)'))
+    async def u_frwd(event):
+        target = event.pattern_match.group(1)
+        if not event.is_reply or not target: return await event.edit("❌ ফরম্যাট: মেসেজে রিপ্লাই করে লিখবি `.frwd @username`")
+        reply = await event.get_reply_message()
+        try:
+            await client.forward_messages(target, reply)
+            await event.edit(f"⏩ সফলভাবে ফরোয়ার্ড করা হয়েছে।")
+        except Exception as e: await event.edit(f"❌ এরর: {e}")
+
+    # ৮. ইনফো বের করা (.info)
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.info'))
+    async def u_info(event):
+        if not event.is_reply: return await event.edit("❌ কারো মেসেজে রিপ্লাই করে `.info` লেখ।")
+        reply = await event.get_reply_message()
+        try:
+            full = await client(GetFullUserRequest(reply.sender_id))
+            await event.edit(f"📋 **নাম:** {full.users[0].first_name}\n🆔 **আইডি:** `{full.users[0].id}`\n📝 **বায়ো:** {full.about or 'খালি'}")
+        except Exception as e: await event.edit(f"❌ এরর: {e}")
+
+    # ৯. নিজের সব মেসেজ ডিলিট বা পার্জ (.purge)
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.purge'))
+    async def u_purge(event):
+        if not event.is_reply: return await event.edit("❌ যেখান থেকে ডিলিট শুরু করবি সেই মেসেজে রিপ্লাই কর।")
+        reply = await event.get_reply_message()
+        to_delete = []
+        async for msg in client.iter_messages(event.chat_id, min_id=reply.id - 1):
+            if msg.out: to_delete.append(msg.id)
+        if to_delete: await client.delete_messages(event.chat_id, to_delete)
+
+    # ১০. গ্রুপ মেম্বারদের একসাথে ট্যাগ করা (.tagall)
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.tagall'))
+    async def u_tagall(event):
+        if event.is_private: return await event.edit("❌ এটি শুধু গ্রুপে কাজ করবে।")
+        await event.delete()
+        text = ""
+        counter = 0
+        async for user in client.iter_participants(event.chat_id):
+            if user.bot: continue
+            text += f"[{user.first_name}](tg://user?id={user.id}) "
+            counter += 1
+            if counter == 5:  # প্রতি মেসেজে ৫ জন করে ট্যাগ করবে স্প্যাম ফিল্টার এড়াতে
+                await client.send_message(event.chat_id, text)
+                text = ""
+                counter = 0
+                await asyncio.sleep(1)
+        if text: await client.send_message(event.chat_id, text)
+
+    # 🛑 ইনকামিং মেসেজ হ্যান্ডলার (AFK অটো রিপ্লাই এবং রিমুভাল মেকানিজম)
     @client.on(events.NewMessage(incoming=True))
-    async def auto_reply_manager(event):
-        if event.sender_id in bot_config["banned_users"]: return
-        if not event.text: return
-        
-        text = event.text.lower()
-        
-        # ১. কাস্টম ট্রিগার চেক (যেমন help বা emergency)
-        for trigger, response in bot_config["triggers"].items():
-            if trigger in text:
-                await event.reply(response)
-                return # রিপ্লাই দেওয়ার পর আর চেক করবে না
-                
-        # ২. AFK চেক
-        state = USER_STATES.get(uid)
-        if state and state["is_afk"]:
-            if event.is_private and event.sender_id != uid:
-                sender = await event.get_sender()
-                if sender and not sender.bot:
-                    afk_msg = bot_config["afk_msg"] or "আমি এখন অফলাইনে আছি।"
-                    await event.reply(afk_msg)
-            elif event.mentioned:
-                afk_msg = bot_config["afk_msg"] or "আমি এখন অফলাইনে আছি।"
-                await event.reply(afk_msg)
+    async def incoming_afk_manager(event):
+        if USER_STATES[uid]["is_afk"] and event.is_private:
+            # ওনার নিজে অন্য আইডি থেকে মেসেজ দিলে যাতে লুপ না হয়
+            if event.sender_id == OWNER_ID: return 
+            await event.reply(f"🤖 **[অটো-রিপ্লাই]**\nআমি এখন লাইনে নেই।\n📝 **কারণ:** {USER_STATES[uid]['reason']}")
 
     @client.on(events.NewMessage(outgoing=True))
     async def outgoing_afk_remover(event):
-        state = USER_STATES.get(uid)
-        if state and state["is_afk"] and not event.text.startswith('!setafk'):
-            state["is_afk"] = False
-            m = await event.respond("⚡ AFK মোড অফ করা হয়েছে।")
+        if USER_STATES[uid]["is_afk"] and not event.text.startswith('.afk'):
+            USER_STATES[uid]["is_afk"] = False
+            m = await event.respond("⚡ **আমি লাইনে ফিরেছি, AFK মোড অফ করা হলো।**")
             await asyncio.sleep(2)
             await m.delete()
 
 # ==========================================
-#  রানিং বুটস্ট্র্যাপ
+#  🔄 বুটস্ট্র্যাপ ও অটো-রিস্টার্ট ইঞ্জিন
 # ==========================================
-async def main():
-    global bot_client
-    bot_client = TelegramClient('helper_bot_v2', API_ID, API_HASH)
-    setup_bot_handlers(bot_client)
 
+async def main():
     threading.Thread(target=run_web_server, daemon=True).start()
-    print("[+] Starting Bot Engine...")
+    print("[+] Starting Gateway Control Bot...")
     await bot_client.start(bot_token=BOT_TOKEN)
     
+    # রেন্ডার রিস্টার্টের পর ভেরিয়েবল থেকে মাল্টিপল আইডি রিল্যান্ড করা
     if RAW_SESSIONS:
         sessions = [s.strip() for s in RAW_SESSIONS.split(",") if s.strip()]
-        for session_str in sessions:
+        print(f"[+] Found {len(sessions)} backup sessions. Auto-connecting...")
+        for index, session_str in enumerate(sessions):
             try:
                 cl = TelegramClient(StringSession(session_str), API_ID, API_HASH)
                 await cl.connect()
                 if await cl.is_user_authorized():
                     me = await cl.get_me()
                     register_userbot_handlers(cl, me)
-                    print(f"[+] Connected: {me.first_name}")
-            except Exception as e: print(f"[-] Error: {e}")
+                    print(f"[+] Account {index+1} ({me.first_name}) Connected Automatically!")
+            except Exception as e:
+                print(f"[-] Failed to load session {index+1}: {e}")
 
     await bot_client.run_until_disconnected()
 
