@@ -338,13 +338,21 @@ def register_userbot_handlers(client, me):
                 except Exception as e:
                     await event.edit(f"❌ **Error:** `{e}`")
 
-        # --- AUTO DELETE ENGINE ---
+                # --- AUTO DELETE ENGINE ---
         if output_msg:
-            # Create a non-blocking background task to delete the message
-            async def delete_later(msg, delay):
-                await asyncio.sleep(delay)
+            # এখানে একটা নতুন নাম 'timer' ব্যবহার করছি, যা কোন এরর দিবে না
+            if is_owner and cmd_name in ["addcmd", "remcmd", "purge"]:
+                timer = 5
+            else:
+                timer = AUTO_DELETE_DELAY
+
+            async def delete_later(msg, d):
+                await asyncio.sleep(d)
                 try: await msg.delete()
                 except: pass
+            
+            asyncio.create_task(delete_later(output_msg, timer))
+
             
             # Using actual delay value for specific commands (e.g. 5s for addcmd, 60s for ping)
             current_delay = 5 if is_owner and cmd_name in ["addcmd", "remcmd", "purge"] else AUTO_DELETE_DELAY
