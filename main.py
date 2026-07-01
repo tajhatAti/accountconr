@@ -10,7 +10,7 @@ from telethon.sessions import StringSession
 # --- Configuration ---
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
-RAW_SESSION = os.environ.get("STRING_SESSION", "")
+RAW_SESSIONS = os.environ.get("STRING_SESSIONS", "")
 CONFIG_FILE = "bot_data.json"
 
 start_time = time.time()
