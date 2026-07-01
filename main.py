@@ -194,7 +194,7 @@ def register_userbot_handlers(client, me):
         # --- COMMAND PROCESSING ---
         output_msg = None
 
-        elif cmd_name == "ping":
+       if cmd_name == "ping":
             start = time.time()
             # সবক্ষেত্রে আগে একটা রিপ্লাই পাঠাবে, তারপর সেটা এডিট করবে (এটা সবচেয়ে নিরাপদ)
             msg = await event.reply("`Processing...`")
@@ -341,21 +341,13 @@ def register_userbot_handlers(client, me):
                 except Exception as e:
                     await event.edit(f"❌ **Error:** `{e}`")
 
-                # --- AUTO DELETE ENGINE ---
+                # --- AUTO DELETE ENGINE (সব রিপ্লাইয়ের জন্য একই নিয়ম) ---
         if output_msg:
-            # এখানে একটা নতুন নাম 'timer' ব্যবহার করছি, যা কোন এরর দিবে না
-            if is_owner and cmd_name in ["addcmd", "remcmd", "purge"]:
-                timer = 5
-            else:
-                timer = AUTO_DELETE_DELAY
-
-            async def delete_later(msg, d):
-                await asyncio.sleep(d)
+            async def auto_delete(msg):
+                await asyncio.sleep(AUTO_DELETE_DELAY)
                 try: await msg.delete()
                 except: pass
-            
-            asyncio.create_task(delete_later(output_msg, timer))
-
+            asyncio.create_task(auto_delete(output_msg))
             
             # Using actual delay value for specific commands (e.g. 5s for addcmd, 60s for ping)
             current_delay = 5 if is_owner and cmd_name in ["addcmd", "remcmd", "purge"] else AUTO_DELETE_DELAY
