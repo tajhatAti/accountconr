@@ -1,261 +1,277 @@
 import os
 import asyncio
-import threading
 import time
 import json
-import base64
-import random
 import re
-from datetime import datetime, timedelta
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
-# Telethon & Third-party Imports
+from datetime import datetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.errors import SessionPasswordNeededError
-from telethon.tl.functions.account import UpdateProfileRequest, UpdateUsernameRequest
-from telethon.tl.functions.channels import EditBannedRequest
-from telethon.tl.types import ChatBannedRights
-from deep_translator import GoogleTranslator
 
-# --- কনফিগারেশন ও এনভায়রনমেন্ট ---
+# --- Configuration ---
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-OWNER_ID = int(os.environ.get("OWNER_ID", 0))
-RAW_SESSIONS = os.environ.get("STRING_SESSIONS", "")
+RAW_SESSION = os.environ.get("STRING_SESSION", "")
+CONFIG_FILE = "bot_data.json"
 
-USER_STATES = {} 
-bot_client = None  
 start_time = time.time()
-login_temp = {"phone": None, "client": None}
 
-# --- JSON ডাটাবেস (কাস্টম সেটিংস সেভ রাখার জন্য) ---
-CONFIG_FILE = "bot_config.json"
-def load_config():
+# --- Database Management ---
+def load_data():
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
-    return {"public_cmds": [], "banned_users": [], "triggers": {}, "afk_msg": None}
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f: 
+                return json.load(f)
+        except:
+            pass
+    return {
+        "public_cmds": ["ping", "alive", "help", "id"], 
+        "banned_users": [], 
+        "triggers": {}, 
+        "afk_msg": "I am currently offline. Please leave a message."
+    }
 
-def save_config(data):
-    with open(CONFIG_FILE, "w") as f:
+def save_data(data):
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f: 
         json.dump(data, f, indent=4)
 
-bot_config = load_config()
+bot_data = load_data()
 
-# --- ওয়েব সার্ভার ---
-class RenderServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"HyperEngine Bot Online")
-    def log_message(self, *args): pass
+# --- Utility Functions ---
+def get_uptime():
+    uptime_sec = int(time.time() - start_time)
+    mins, secs = divmod(uptime_sec, 60)
+    hours, mins = divmod(mins, 60)
+    days, hours = divmod(hours, 24)
+    
+    parts = []
+    if days > 0: parts.append(f"{days}d")
+    if hours > 0: parts.append(f"{hours}h")
+    if mins > 0: parts.append(f"{mins}m")
+    parts.append(f"{secs}s")
+    return " ".join(parts)
 
-def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    HTTPServer(('0.0.0.0', port), RenderServer).serve_forever()
-
-# --- অথেন্টিকেশন চেকার ---
-def check_access(event, uid, cmd_name):
-    sender = event.sender_id
-    if sender == uid: return True
-    if sender in bot_config["banned_users"]: return False
-    if cmd_name in bot_config["public_cmds"]: return True
-    return False
-
-def setup_bot_handlers(client):
-    @client.on(events.NewMessage(pattern='/start'))
-    async def b_start(event):
-        if event.sender_id != OWNER_ID: return
-        await event.reply("⚙️ **কন্ট্রোলার প্যানেল সচল!**")
-
-    # (আগের কন্ট্রোলার কমান্ডগুলো এখানে থাকবে, জায়গা বাঁচানোর জন্য সংক্ষিপ্ত করা হলো)
-    # তুমি তোমার আগের কোডের প্যানেল ফিচারস এখানে যুক্ত রাখতে পারো।
-
-async def finalize_login(event):
-    me = await login_temp["client"].get_me()
-    ss = login_temp["client"].session.save()
-    register_userbot_handlers(login_temp["client"], me)
-    existing = RAW_SESSIONS + "," if RAW_SESSIONS else ""
-    await event.reply(f"🎉 **{me.first_name}** অনলাইন হয়েছে!\n\n`{existing}{ss}`")
-    login_temp["phone"] = None
-
-# ==========================================
-#  👤 ইউজারবট ইঞ্জিন (কাস্টম কমান্ড ও রেস্ট্রিকশন সহ)
-# ==========================================
-def register_userbot_handlers(client, me):
+# --- Core Userbot Logic ---
+def register_handlers(client, me):
     uid = me.id
-    USER_STATES[uid] = {"is_afk": False, "client": client, "name": me.first_name}
+    afk_status = {"is_afk": False}
 
-    # --- মালিকের কাস্টমাইজেশন টুলস (পাবলিক নয়) ---
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!(add|rem) (.*)'))
-    async def u_cmd_manager(event):
-        action, cmd = event.pattern_match.group(1), event.pattern_match.group(2).lower()
-        if action == "add":
-            if cmd not in bot_config["public_cmds"]: bot_config["public_cmds"].append(cmd)
-            msg = f"✅ `{cmd}` সাধারণ ইউজারদের জন্য উন্মুক্ত করা হয়েছে।"
-        else:
-            if cmd in bot_config["public_cmds"]: bot_config["public_cmds"].remove(cmd)
-            msg = f"🚫 `{cmd}` সাধারণ ইউজারদের থেকে রিমুভ করা হয়েছে।"
-        save_config(bot_config)
-        await event.edit(msg)
+    async def is_authorized(event, cmd_name):
+        if event.sender_id == uid: return True
+        if event.sender_id in bot_data["banned_users"]: return False
+        return cmd_name in bot_data["public_cmds"]
 
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!banme(?:\s+(.*))?'))
-    async def u_ban_user(event):
-        target_id = None
-        if event.is_reply: target_id = (await event.get_reply_message()).sender_id
-        else: 
-            try: target_id = (await client.get_entity(event.pattern_match.group(1))).id
-            except: return await event.edit("❌ ইউজার পাওয়া যায়নি।")
-        
-        if target_id not in bot_config["banned_users"]:
-            bot_config["banned_users"].append(target_id)
-            save_config(bot_config)
-        await event.edit(f"🔨 ইউজার `{target_id}` কে বটের ব্যবহার থেকে ব্যান করা হয়েছে।")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!unbanme(?:\s+(.*))?'))
-    async def u_unban_user(event):
-        target_id = None
-        if event.is_reply: target_id = (await event.get_reply_message()).sender_id
-        else: 
-            try: target_id = (await client.get_entity(event.pattern_match.group(1))).id
-            except: return await event.edit("❌ ইউজার পাওয়া যায়নি।")
-        
-        if target_id in bot_config["banned_users"]:
-            bot_config["banned_users"].remove(target_id)
-            save_config(bot_config)
-        await event.edit(f"✅ ইউজার `{target_id}` কে আনব্যান করা হয়েছে।")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!setreply (.*?)\s*\|\s*(.*)'))
-    async def u_set_reply(event):
-        trigger = event.pattern_match.group(1).lower()
-        response = event.pattern_match.group(2)
-        bot_config["triggers"][trigger] = response
-        save_config(bot_config)
-        await event.edit(f"✅ ট্রিগার সেট করা হয়েছে:\n**When:** `{trigger}`\n**Reply:** `{response}`")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!delreply (.*)'))
-    async def u_del_reply(event):
-        trigger = event.pattern_match.group(1).lower()
-        if trigger in bot_config["triggers"]:
-            del bot_config["triggers"][trigger]
-            save_config(bot_config)
-            await event.edit(f"🗑️ `{trigger}` ট্রিগারটি ডিলিট করা হয়েছে।")
-        else: await event.edit("❌ ট্রিগারটি পাওয়া যায়নি।")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!setafk (.*)'))
-    async def u_set_afk(event):
-        bot_config["afk_msg"] = event.pattern_match.group(1)
-        save_config(bot_config)
-        USER_STATES[uid]["is_afk"] = True
-        await event.edit(f"💤 AFK মোড অন! কাস্টম মেসেজ সেট করা হয়েছে।")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'!mute (\d+)([dhm])(?:\s+(.*))?'))
-    async def u_mute_timer(event):
-        amount, unit = int(event.pattern_match.group(1)), event.pattern_match.group(2)
-        target = event.pattern_match.group(3)
-        
-        if event.is_reply: target_entity = await event.get_reply_message()
-        elif target: target_entity = await client.get_entity(target)
-        else: return await event.edit("❌ ইউজার মেনশন বা রিপ্লাই করো।")
-        
-        target_id = target_entity.sender_id if event.is_reply else target_entity.id
-        
-        if unit == 'd': delta = timedelta(days=amount)
-        elif unit == 'h': delta = timedelta(hours=amount)
-        elif unit == 'm': delta = timedelta(minutes=amount)
-        
-        until = datetime.now() + delta
-        rights = ChatBannedRights(until_date=until, send_messages=True)
-        try:
-            await client(EditBannedRequest(event.chat_id, target_id, rights))
-            await event.edit(f"🔇 ইউজারকে {amount}{unit} এর জন্য মিউট করা হয়েছে।")
-        except Exception as e: await event.edit(f"❌ এরর বা এডমিন রাইটস নেই: {e}")
-
-    # --- কোর কমান্ডস (পাবলিক এক্সেস সাপোর্ট সহ) ---
-    # প্রিফিক্স ছাড়া বা প্রিফিক্স সহ কাজ করবে (যেমন: .ping, ping, !ping)
-    @client.on(events.NewMessage(pattern=r'(?i)^[.\/!]?(ping)$'))
-    async def u_ping(event):
-        if not check_access(event, uid, "ping"): return
-        t = time.time()
-        m = await event.reply("`Pinging...`") if event.sender_id != uid else await event.edit("`Pinging...`")
-        await m.edit(f"🎯 **Pong!**\n⏱️ `{(time.time() - t)*1000:.2f}ms`")
-
-    @client.on(events.NewMessage(pattern=r'(?i)^[.\/!]?(id)$'))
-    async def u_id(event):
-        if not check_access(event, uid, "id"): return
-        msg = f"👤 **ইউজার আইডি:** `{event.sender_id}`\n📍 **চ্যাট আইডি:** `{event.chat_id}`"
-        await event.reply(msg) if event.sender_id != uid else await event.edit(msg)
-
-    @client.on(events.NewMessage(pattern=r'(?i)^[.\/!]?(alive)$'))
-    async def u_alive(event):
-        if not check_access(event, uid, "alive"): return
-        msg = f"⚡ **হাইব্রিড ইঞ্জিন সচল!**\n⏱️ আপটাইম: `{int(time.time() - start_time)}s`"
-        await event.reply(msg) if event.sender_id != uid else await event.edit(msg)
-
-    # --- অটো রেসপন্স ও AFK (কাস্টম মেসেজ) ---
-    @client.on(events.NewMessage(incoming=True))
-    async def auto_reply_manager(event):
-        if event.sender_id in bot_config["banned_users"]: return
+    @client.on(events.NewMessage)
+    async def universal_handler(event):
         if not event.text: return
         
-        text = event.text.lower()
+        text = event.text.strip()
+        sender_id = event.sender_id
+
+        # 1. AFK Manager (Incoming)
+        if afk_status["is_afk"] and sender_id != uid and sender_id not in bot_data["banned_users"]:
+            if event.is_private or event.mentioned:
+                await event.reply(f"💤 **[Auto-Reply]**\n{bot_data['afk_msg']}")
         
-        # ১. কাস্টম ট্রিগার চেক (যেমন help বা emergency)
-        for trigger, response in bot_config["triggers"].items():
-            if trigger in text:
-                await event.reply(response)
-                return # রিপ্লাই দেওয়ার পর আর চেক করবে না
+        # 2. AFK Remover (Outgoing)
+        if afk_status["is_afk"] and sender_id == uid:
+            if not text.lower().startswith(("!setafk", "/setafk", ".setafk")):
+                afk_status["is_afk"] = False
+                msg = await event.respond("⚡ **AFK mode disabled. You are back online.**")
+                await asyncio.sleep(3)
+                await msg.delete()
+
+        # 3. Custom Auto-Reply (Triggers)
+        if sender_id != uid and sender_id not in bot_data["banned_users"]:
+            lower_text = text.lower()
+            for trigger, response in bot_data["triggers"].items():
+                if trigger in lower_text:
+                    await event.reply(response)
+                    return # Stop processing further if trigger matched
+
+        # 4. Command Parser (Regex handles prefixes, @username, and multi-line arguments safely)
+        # Matches: [prefix](command)[@botusername] [arguments]
+        match = re.match(r'^([.!/])?([a-zA-Z0-9_]+)(?:@[a-zA-Z0-9_]+)?(?:\s+(.*))?$', text, re.DOTALL)
+        
+        if not match: return
+        
+        prefix, cmd_name, args = match.groups()
+        cmd_name = cmd_name.lower()
+        args = args.strip() if args else ""
+
+        # Avoid processing normal text without prefix unless it's a specific public command
+        if not prefix and cmd_name not in bot_data["public_cmds"]:
+            return
+
+        if not await is_authorized(event, cmd_name): return
+
+        is_owner = (sender_id == uid)
+        
+        # =====================================
+        # PUBLIC / BASIC COMMANDS
+        # =====================================
+        if cmd_name == "ping":
+            start = time.time()
+            msg = await event.reply("`Pinging...`") if not is_owner else await event.edit("`Pinging...`")
+            end = time.time()
+            await msg.edit(f"🏓 **System Latency:** `{(end - start) * 1000:.2f}ms`")
+
+        elif cmd_name == "alive":
+            uptime = get_uptime()
+            alive_msg = (
+                f"⚡ **System Status:** Online\n"
+                f"👤 **User:** {me.first_name}\n"
+                f"⏱ **Uptime:** `{uptime}`\n"
+                f"🛡 **Engine:** Advanced Userbot"
+            )
+            await event.reply(alive_msg) if not is_owner else await event.edit(alive_msg)
+
+        elif cmd_name == "id":
+            id_msg = f"🆔 **User ID:** `{sender_id}`\n💬 **Chat ID:** `{event.chat_id}`"
+            if event.is_reply:
+                rep = await event.get_reply_message()
+                id_msg += f"\n🎯 **Replied User ID:** `{rep.sender_id}`"
+            await event.reply(id_msg) if not is_owner else await event.edit(id_msg)
+
+        elif cmd_name == "help":
+            help_msg = (
+                "🛠 **Hyperbot Command Center** 🛠\n\n"
+                "**🌐 Public Commands:**\n"
+                "▫️ `ping` - Check system latency\n"
+                "▫️ `alive` - Check bot status & uptime\n"
+                "▫️ `id` - Get Chat/User IDs\n"
+                "▫️ `help` - Show this menu\n\n"
+                "**👑 Owner Commands (Admin Only):**\n"
+                "▫️ `!addcmd [cmd]` - Allow a command for public use\n"
+                "▫️ `!remcmd [cmd]` - Remove a command from public use\n"
+                "▫️ `!ban [user/reply]` - Ban user from using the bot\n"
+                "▫️ `!unban [user/reply]` - Unban user\n"
+                "▫️ `!setreply trigger | text` - Set auto-reply\n"
+                "▫️ `!delreply trigger` - Delete auto-reply\n"
+                "▫️ `!setafk [text]` - Enable AFK mode\n\n"
+                "**⚙️ Utility Commands (Owner Only):**\n"
+                "▫️ `!purge` (Reply) - Delete messages up to replied message\n"
+                "▫️ `!userinfo` (Reply/Username) - Get user details\n"
+            )
+            await event.reply(help_msg) if not is_owner else await event.edit(help_msg)
+
+        # =====================================
+        # OWNER / MANAGEMENT COMMANDS
+        # =====================================
+        if is_owner:
+            if cmd_name == "addcmd":
+                if args and args not in bot_data["public_cmds"]:
+                    bot_data["public_cmds"].append(args.lower())
+                    save_data(bot_data)
+                    await event.edit(f"✅ Command `{args}` is now available for public use.")
+                else:
+                    await event.edit("⚠️ Please specify a valid command or it's already added.")
+
+            elif cmd_name == "remcmd":
+                if args and args in bot_data["public_cmds"]:
+                    bot_data["public_cmds"].remove(args.lower())
+                    save_data(bot_data)
+                    await event.edit(f"🚫 Command `{args}` has been removed from public use.")
+
+            elif cmd_name == "ban":
+                target = args
+                if event.is_reply:
+                    target = (await event.get_reply_message()).sender_id
                 
-        # ২. AFK চেক
-        state = USER_STATES.get(uid)
-        if state and state["is_afk"]:
-            if event.is_private and event.sender_id != uid:
-                sender = await event.get_sender()
-                if sender and not sender.bot:
-                    afk_msg = bot_config["afk_msg"] or "আমি এখন অফলাইনে আছি।"
-                    await event.reply(afk_msg)
-            elif event.mentioned:
-                afk_msg = bot_config["afk_msg"] or "আমি এখন অফলাইনে আছি।"
-                await event.reply(afk_msg)
+                if target and target not in bot_data["banned_users"]:
+                    bot_data["banned_users"].append(target)
+                    save_data(bot_data)
+                    await event.edit(f"🔨 User `{target}` is now banned from interacting with the bot.")
 
-    @client.on(events.NewMessage(outgoing=True))
-    async def outgoing_afk_remover(event):
-        state = USER_STATES.get(uid)
-        if state and state["is_afk"] and not event.text.startswith('!setafk'):
-            state["is_afk"] = False
-            m = await event.respond("⚡ AFK মোড অফ করা হয়েছে।")
-            await asyncio.sleep(2)
-            await m.delete()
+            elif cmd_name == "unban":
+                target = args
+                if event.is_reply:
+                    target = (await event.get_reply_message()).sender_id
+                
+                if target in bot_data["banned_users"]:
+                    bot_data["banned_users"].remove(target)
+                    save_data(bot_data)
+                    await event.edit(f"✅ User `{target}` has been unbanned.")
 
-# ==========================================
-#  রানিং বুটস্ট্র্যাপ
-# ==========================================
+            elif cmd_name == "setreply":
+                # Splitting by the first occurrence of '|'
+                if "|" in args:
+                    trigger, response = map(str.strip, args.split("|", 1))
+                    if trigger and response:
+                        bot_data["triggers"][trigger.lower()] = response
+                        save_data(bot_data)
+                        await event.edit(f"✅ **Auto-reply set successfully.**\n**Trigger:** `{trigger}`\n**Response:**\n{response}")
+                else:
+                    await event.edit("⚠️ **Syntax Error:** Use `!setreply trigger | Your long message here`")
+
+            elif cmd_name == "delreply":
+                if args.lower() in bot_data["triggers"]:
+                    del bot_data["triggers"][args.lower()]
+                    save_data(bot_data)
+                    await event.edit(f"🗑 **Trigger deleted:** `{args}`")
+
+            elif cmd_name == "setafk":
+                afk_status["is_afk"] = True
+                if args:
+                    bot_data["afk_msg"] = args
+                    save_data(bot_data)
+                await event.edit(f"💤 **AFK Mode Enabled.**\n**Message:**\n{bot_data['afk_msg']}")
+
+            elif cmd_name == "purge":
+                if not event.is_reply:
+                    return await event.edit("⚠️ Reply to a message to purge from there.")
+                rep = await event.get_reply_message()
+                messages_to_delete = []
+                async for m in client.iter_messages(event.chat_id, min_id=rep.id - 1):
+                    messages_to_delete.append(m.id)
+                    if len(messages_to_delete) >= 100:  # Delete in chunks to avoid flood
+                        await client.delete_messages(event.chat_id, messages_to_delete)
+                        messages_to_delete = []
+                if messages_to_delete:
+                    await client.delete_messages(event.chat_id, messages_to_delete)
+                msg = await event.respond("🧹 **Purge Complete.**")
+                await asyncio.sleep(3)
+                await msg.delete()
+
+            elif cmd_name == "userinfo":
+                target = args
+                if event.is_reply:
+                    target = (await event.get_reply_message()).sender_id
+                if not target:
+                    return await event.edit("⚠️ Reply to a user or provide a username/ID.")
+                try:
+                    user = await client.get_entity(target)
+                    info = (
+                        f"👤 **User Information:**\n"
+                        f"**Name:** {user.first_name} {user.last_name or ''}\n"
+                        f"**ID:** `{user.id}`\n"
+                        f"**Username:** @{user.username if user.username else 'N/A'}\n"
+                        f"**Bot:** {'Yes' if user.bot else 'No'}\n"
+                        f"**Scam:** {'Yes' if user.scam else 'No'}"
+                    )
+                    await event.edit(info)
+                except Exception as e:
+                    await event.edit(f"❌ **Error fetching user:** `{e}`")
+
+# --- Main Bootstrapper ---
 async def main():
-    global bot_client
-    bot_client = TelegramClient('helper_bot_v2', API_ID, API_HASH)
-    setup_bot_handlers(bot_client)
+    if not RAW_SESSION:
+        print("[-] ERROR: STRING_SESSION is missing.")
+        return
 
-    threading.Thread(target=run_web_server, daemon=True).start()
-    print("[+] Starting Bot Engine...")
-    await bot_client.start(bot_token=BOT_TOKEN)
+    print("[+] Initializing Engine...")
+    client = TelegramClient(StringSession(RAW_SESSION), API_ID, API_HASH)
     
-    if RAW_SESSIONS:
-        sessions = [s.strip() for s in RAW_SESSIONS.split(",") if s.strip()]
-        for session_str in sessions:
-            try:
-                cl = TelegramClient(StringSession(session_str), API_ID, API_HASH)
-                await cl.connect()
-                if await cl.is_user_authorized():
-                    me = await cl.get_me()
-                    register_userbot_handlers(cl, me)
-                    print(f"[+] Connected: {me.first_name}")
-            except Exception as e: print(f"[-] Error: {e}")
-
-    await bot_client.run_until_disconnected()
+    await client.connect()
+    if not await client.is_user_authorized():
+        print("[-] ERROR: Invalid String Session.")
+        return
+        
+    me = await client.get_me()
+    register_handlers(client, me)
+    print(f"[+] Userbot Online as: {me.first_name}")
+    
+    await client.run_until_disconnected()
 
 if __name__ == '__main__':
     asyncio.run(main())
-        
+                
