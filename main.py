@@ -205,13 +205,13 @@ def register_userbot_handlers(client, me):
                 f"🧭 **Ping:** `{latency} ms`\n"
                 f"📶 **Status:** {status}\n\n"
                 f"📝 **Note: This ping shows TBC processing time👍.**\n"
-                f"🗑 **This message will be deleted after 6 seco nds.**"
+                f"🗑 **This message will be deleted after 6 seconds.**"
             )
             output_msg = await msg.edit(output)
             
             # শুধুমাত্র পিং কমান্ডের জন্য ৬ সেকেন্ডের স্পেশাল অটো-ডিলিট লজিক
             async def delete_ping(m):
-                await asyncio.sleep(4)
+                await asyncio.sleep(6)
                 try: await m.delete()
                 except: pass
             asyncio.create_task(delete_ping(output_msg))
