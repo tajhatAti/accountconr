@@ -254,7 +254,7 @@ def register_handlers(client, me):
 
 # --- Main Bootstrapper ---
 async def main():
-    if not RAW_SESSION:
+    if not RAW_SESSIONS:
         print("[-] ERROR: STRING_SESSION is missing.")
         return
 
