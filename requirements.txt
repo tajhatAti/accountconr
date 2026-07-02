@@ -1,6 +1,6 @@
-Telethon==1.33.1
-cryptg
-deep-translator
-telethon
+Telethon
 deep-translator
 psutil
+gtts
+qrcode[pil]
+Pillow
