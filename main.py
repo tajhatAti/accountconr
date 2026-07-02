@@ -303,35 +303,18 @@ def register_userbot(client, me):
         )
 
     # ── PING (fixed — separate DM vs group latency) ───────────────────────────
-    @client.on(events.NewMessage(pattern=r'(?i)^[.!]?ping$'))
-    async def _(e):
-        if not allowed(e, "ping"): return
-        is_group = e.is_group or e.is_channel
-
-        t1 = time.time()
-        if is_owner(e):
-            m = await e.edit("`...`")
-        else:
-            m = await e.reply("`...`")
-
-        rtt = (time.time() - t1) * 1000
-
-        if is_group:
-            note = "_(group latency includes server routing)_"
-        else:
-            note = ""
-
-        status = "🟢" if rtt < 300 else ("🟡" if rtt < 800 else "🔴")
-        text = f"**Ping:** `{rtt:.1f}ms` {status}\n**Uptime:** `{uptime()}`"
-        if note: text += f"\n{note}"
-
-        await m.edit(text)
-
-        if not is_owner(e):
-            asyncio.create_task(auto_delete(m, 10))
-            try: asyncio.create_task(auto_delete(e, 10))
-            except: pass
-
+    @client.on(events.NewMessage(pattern=r'(?i)^[.!\/]?ping(?:@\w+)?$'))
+async def _(e):
+    if not allowed(e, "ping"): return
+    t1 = time.time()
+    m = await e.reply("`...`")
+    rtt = (time.time() - t1) * 1000
+    status = "🟢" if rtt < 300 else ("🟡" if rtt < 800 else "🔴")
+    await m.edit(f"**Ping:** `{rtt:.1f}ms` {status}\n**Uptime:** `{uptime()}`")
+    if not is_owner(e):
+        asyncio.create_task(auto_delete(m, 10))
+        try: asyncio.create_task(auto_delete(e, 10))
+        except: pass
     # ── ALIVE ─────────────────────────────────────────────────────────────────
     @client.on(events.NewMessage(pattern=r'(?i)^[.!]?alive$'))
     async def _(e):
