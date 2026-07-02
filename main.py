@@ -280,18 +280,53 @@ def register_userbot(client, me):
             "**Config:** `!addcmd` `!remcmd` `!pubcmds` `!ban` `!unban` `!banlist` `!setreply` `!delreply` `!triggers` `!setafk`"
         )
 
-    @client.on(events.NewMessage(pattern=r'(?i)^[.!\/]?ping(?:@\w+)?$'))
-    async def _(e):
-        if not allowed(e,"ping"): return
-        t1 = time.time()
-        m  = await e.reply("`...`")
-        rtt = (time.time()-t1)*1000
-        status = "🟢" if rtt<300 else ("🟡" if rtt<800 else "🔴")
-        await m.edit(f"**Ping:** `{rtt:.1f}ms` {status}\n**Uptime:** `{uptime()}`")
+    # ── GROUP PING (সব method কাজ করবে, 10s auto-delete, uptime নেই) ────────────
+@client.on(events.NewMessage(pattern=r'(?i)^[.!\/]?ping(?:@\w+)?$'))
+async def _(e):
+    if not allowed(e, "ping"): return
+    is_group = e.is_group or e.is_channel
+
+    t1 = time.time()
+    m  = await e.reply("`⏱`")
+    rtt = (time.time() - t1) * 1000
+
+    if is_group:
+        status = "🟢" if rtt < 300 else ("🟡" if rtt < 800 else "🔴")
+        text = (
+            f"**`PONG`** {status}\n"
+            f"┌ **Latency:** `{rtt:.1f}ms`\n"
+            f"└ **Account:** `{me.first_name}`"
+        )
+    else:
+        status = "🟢" if rtt < 300 else ("🟡" if rtt < 800 else "🔴")
+        text = (
+            f"**`PONG`** {status}\n"
+            f"┌ **Latency:** `{rtt:.1f}ms`\n"
+            f"├ **Uptime:** `{uptime()}`\n"
+            f"└ **Account:** `{me.first_name}`"
+        )
+
+    await m.edit(text)
+
+    if is_group or not is_owner(e):
+        asyncio.create_task(auto_del(m, 0.5))
         if not is_owner(e):
-            asyncio.create_task(auto_del(m,10))
-            try: asyncio.create_task(auto_del(e,10))
+            try: asyncio.create_task(auto_del(e, 10))
             except: pass
+
+
+# ── PUBLIC HELP (যে কেউ লিখলে reply পাবে, 30s পর delete) ──────────────────
+@client.on(events.NewMessage(pattern=r'(?i)^[.!\/]?help(?:@\w+)?$'))
+async def _(e):
+    if not allowed(e, "help"): return
+    cmds = "\n".join(f"• `{c}`" for c in db["public_cmds"])
+    msg = (
+        f"**Available Commands**\n\n"
+        f"{cmds if cmds else '— none set —'}\n\n"
+        f"_Owner can add/remove commands using `!addcmd` and `!remcmd`_"
+    )
+    m = await e.reply(msg) if not is_owner(e) else await e.edit(msg)
+    if not is_owner(e): asyncio.create_task(auto_del(m, 1))
 
     @client.on(events.NewMessage(pattern=r'(?i)^[.!\/]?alive(?:@\w+)?$'))
     async def _(e):
