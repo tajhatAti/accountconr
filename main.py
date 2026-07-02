@@ -1,4 +1,4 @@
-import os, asyncio, threading, time, json, re, base64
+import os, asyncio, threading, time, json, re, base64, io
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -6,7 +6,8 @@ from telethon.errors import SessionPasswordNeededError
 from telethon.tl.functions.account import UpdateProfileRequest, UpdateUsernameRequest
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.photos import UploadProfilePhotoRequest
-from telethon.tl.functions.channels import EditBannedRequest
+from telethon.tl.functions.channels import EditBannedRequest, GetFullChannelRequest
+from telethon.tl.functions.messages import GetFullChatRequest
 from telethon.tl.types import ChatBannedRights
 from datetime import datetime, timedelta
 from deep_translator import GoogleTranslator
@@ -52,16 +53,15 @@ class _H(BaseHTTPRequestHandler):
 def run_server():
     HTTPServer(('0.0.0.0',int(os.environ.get("PORT",8080))),_H).serve_forever()
 
+# ══════════════════════════════════════════════
+#  CONTROLLER BOT
+# ══════════════════════════════════════════════
 def setup_controller(bot):
 
     @bot.on(events.NewMessage(pattern='^/start$'))
     async def _(e):
         if e.sender_id != OWNER_ID: return
-        await e.reply(
-            "**Controller online.**\n\n"
-            "Send phone number (`+880...`) to add account.\n"
-            "`/help` for all commands."
-        )
+        await e.reply("**Controller online.**\n\nSend phone number (`+880...`) to add account.\n`/help` for commands.")
 
     @bot.on(events.NewMessage(pattern='^/help$'))
     async def _(e):
@@ -70,10 +70,10 @@ def setup_controller(bot):
             "**Controller Commands**\n\n"
             "`/list` — active sessions\n"
             "`/stats` — count + uptime\n"
-            "`/ping_all` — ping all sessions\n"
+            "`/ping_all` — ping all\n"
             "`/broadcast <text>` — send to all saved messages\n"
             "`/afk_all <reason>` — set all AFK\n"
-            "`/unafk_all` — disable AFK for all\n"
+            "`/unafk_all` — disable all AFK\n"
             "`/bio_all <text>` — change bio for all\n"
             "`/name_all <name>` — change name for all\n"
             "`/backup_sessions` — export sessions\n"
@@ -159,7 +159,7 @@ def setup_controller(bot):
                 await d["client"].get_me()
                 lines.append(f"• {d['name']}: `{(time.time()-t)*1000:.0f}ms`")
             except: lines.append(f"• {d['name']}: offline")
-        await e.reply("**Ping Results**\n\n"+"\n".join(lines) if lines else "No sessions.")
+        await e.reply("**Ping**\n\n"+"\n".join(lines) if lines else "No sessions.")
 
     @bot.on(events.NewMessage(pattern='^/session_count$'))
     async def _(e):
@@ -203,11 +203,9 @@ def setup_controller(bot):
     async def _(e):
         await e.reply(f"Your ID: `{e.sender_id}`")
 
-    # OTP login — pattern ছাড়া handler সবার শেষে
     @bot.on(events.NewMessage(func=lambda e: e.sender_id==OWNER_ID and bool(e.text) and not e.text.startswith('/')))
     async def _(e):
         text = e.text.strip()
-
         if text.startswith('+') and not login_temp["phone"]:
             login_temp["phone"] = text
             await e.reply("Sending OTP...")
@@ -219,7 +217,6 @@ def setup_controller(bot):
             except Exception as ex:
                 login_temp["phone"] = None
                 await e.reply(f"Error: {ex}")
-
         elif text.startswith('code ') and login_temp["phone"]:
             try:
                 await login_temp["client"].sign_in(login_temp["phone"],text.split()[1])
@@ -229,7 +226,6 @@ def setup_controller(bot):
             except Exception as ex:
                 login_temp["phone"] = None
                 await e.reply(f"Error: {ex}")
-
         elif text.startswith('pass ') and login_temp["phone"]:
             try:
                 await login_temp["client"].sign_in(password=text[5:].strip())
@@ -242,18 +238,19 @@ async def _finalize(e):
     ss  = login_temp["client"].session.save()
     register_userbot(login_temp["client"],me)
     base = (RAW_SESSIONS+",") if RAW_SESSIONS else ""
-    await e.reply(
-        f"**Logged in as {me.first_name}**\n\n"
-        f"Update `STRING_SESSIONS` in Render:\n`{base}{ss}`"
-    )
+    await e.reply(f"**Logged in as {me.first_name}**\n\nUpdate `STRING_SESSIONS`:\n`{base}{ss}`")
     login_temp["phone"] = None
 
+# ══════════════════════════════════════════════
+#  USERBOT ENGINE
+# ══════════════════════════════════════════════
 def register_userbot(client, me):
     uid   = me.id
     notes = {}
     USER_STATES[uid] = {"is_afk":False,"reason":"","client":client,"name":me.first_name}
 
     def is_owner(e): return e.sender_id == uid
+
     def allowed(e, cmd):
         if e.sender_id == uid: return True
         if e.sender_id in db["banned"]: return False
@@ -264,77 +261,95 @@ def register_userbot(client, me):
         try: await msg.delete()
         except: pass
 
-    @client.on(events.NewMessage(outgoing=True, pattern=r'\.help$'))
+    # ── HELP ─────────────────────────────────
+    @client.on(events.NewMessage(pattern=r'(?i)^[.!\/]?help(?:@\w+)?$'))
     async def _(e):
-        await e.edit(
-            f"**{me.first_name} — Commands**\n\n"
-            "**Info:** `.ping` `.alive` `.id` `.chatid` `.myinfo` `.userinfo` `.sysinfo`\n\n"
-            "**Profile:** `.bio` `.name` `.lastname` `.username` `.delpfp` `.setpfp`\n\n"
-            "**Messages:** `.del` `.pin` `.unpin` `.read` `.echo` `.frwd` `.save` `.purge` `.count`\n\n"
-            "**Styles** (reply): `.bold` `.italic` `.mono` `.strike` `.underline` `.rev` `.upper` `.lower` `.mock` `.binary` `.hex` `.b64` `.morse` `.vapor`\n\n"
-            "**Utils:** `.calc` `.tr <lang>` `.remind <sec> <text>`\n\n"
-            "**Notes:** `.note <k> <v>` `.getnote <k>` `.notes` `.delnote <k>`\n\n"
-            "**Animations:** `.type` `.loading` `.clock` `.heart` `.progress`\n\n"
-            "**Mod:** `.kick` `.ban` `.mute <Xd/h/m>` `.unban` `.unmute`\n\n"
-            "**AFK:** `.afk <reason>`\n\n"
-            "**Config:** `!addcmd` `!remcmd` `!pubcmds` `!ban` `!unban` `!banlist` `!setreply` `!delreply` `!triggers` `!setafk`"
-        )
-
-    # ── GROUP PING (সব method কাজ করবে, 10s auto-delete, uptime নেই) ────────────
-@client.on(events.NewMessage(pattern=r'(?i)^[.!\/]?ping(?:@\w+)?$'))
-async def _(e):
-    if not allowed(e, "ping"): return
-    is_group = e.is_group or e.is_channel
-
-    t1 = time.time()
-    m  = await e.reply("`⏱`")
-    rtt = (time.time() - t1) * 1000
-
-    if is_group:
-        status = "🟢" if rtt < 300 else ("🟡" if rtt < 800 else "🔴")
-        text = (
-            f"**`PONG`** {status}\n"
-            f"┌ **Latency:** `{rtt:.1f}ms`\n"
-            f"└ **Account:** `{me.first_name}`"
-        )
-    else:
-        status = "🟢" if rtt < 300 else ("🟡" if rtt < 800 else "🔴")
-        text = (
-            f"**`PONG`** {status}\n"
-            f"┌ **Latency:** `{rtt:.1f}ms`\n"
-            f"├ **Uptime:** `{uptime()}`\n"
-            f"└ **Account:** `{me.first_name}`"
-        )
-
-    await m.edit(text)
-
-    if is_group or not is_owner(e):
-        asyncio.create_task(auto_del(m, 0.5))
-        if not is_owner(e):
-            try: asyncio.create_task(auto_del(e, 10))
+        if not allowed(e,"help"): return
+        if is_owner(e):
+            await e.edit(
+                f"**{me.first_name} — All Commands**\n\n"
+                "**Info**\n"
+                "`.ping` `.alive` `.id` `.chatid` `.myinfo`\n"
+                "`.userinfo` `.whois <@user>` `.chatinfo` `.dc` `.sysinfo`\n\n"
+                "**Profile**\n"
+                "`.bio <text>` `.name <text>` `.lastname <text>`\n"
+                "`.username <text>` `.clearbio` `.delpfp` `.setpfp`\n\n"
+                "**Messages**\n"
+                "`.del` `.pin` `.unpin` `.read` `.echo <text>`\n"
+                "`.frwd <@user>` `.save` `.purge` `.count` `.quote`\n\n"
+                "**Text Styles** _(reply করে দাও)_\n"
+                "`.bold` `.italic` `.mono` `.strike` `.underline`\n"
+                "`.rev` `.upper` `.lower` `.mock` `.binary` `.hex` `.b64` `.morse` `.vapor`\n\n"
+                "**Utilities**\n"
+                "`.calc <expr>` `.tr <lang>` `.remind <sec> <text>`\n"
+                "`.tts <text>` `.qr <text>` `.stickify`\n\n"
+                "**Notes**\n"
+                "`.note <key> <value>` `.getnote <key>` `.notes` `.delnote <key>`\n\n"
+                "**Animations**\n"
+                "`.type <text>` `.loading` `.clock` `.heart` `.progress`\n\n"
+                "**Moderation**\n"
+                "`.kick` `.ban` `.mute <Xd/h/m>` `.unban` `.unmute`\n\n"
+                "**AFK**\n"
+                "`.afk <reason>` `.busy` `.back`\n\n"
+                "**Owner Config**\n"
+                "`!addcmd <cmd>` `!remcmd <cmd>` `!pubcmds`\n"
+                "`!ban` `!unban` `!banlist`\n"
+                "`!setreply <trigger> | <reply>` `!delreply <trigger>` `!triggers`\n"
+                "`!setafk <message>`"
+            )
+        else:
+            cmds = "\n".join(f"• `{c}`" for c in db["public_cmds"])
+            m = await e.reply(
+                f"**Available Commands**\n\n"
+                f"{cmds if cmds else '— none —'}"
+            )
+            asyncio.create_task(auto_del(m,30))
+            try: asyncio.create_task(auto_del(e,30))
             except: pass
 
+    # ── PING (group vs DM আলাদা, সব method) ──
+    @client.on(events.NewMessage(pattern=r'(?i)^[.!\/]?ping(?:@\w+)?$'))
+    async def _(e):
+        if not allowed(e,"ping"): return
+        is_group = e.is_group or e.is_channel
+        t1 = time.time()
+        m  = await e.reply("`⏱`")
+        rtt = (time.time()-t1)*1000
+        status = "🟢" if rtt<300 else ("🟡" if rtt<800 else "🔴")
 
-# ── PUBLIC HELP (যে কেউ লিখলে reply পাবে, 30s পর delete) ──────────────────
-@client.on(events.NewMessage(pattern=r'(?i)^[.!\/]?help(?:@\w+)?$'))
-async def _(e):
-    if not allowed(e, "help"): return
-    cmds = "\n".join(f"• `{c}`" for c in db["public_cmds"])
-    msg = (
-        f"**Available Commands**\n\n"
-        f"{cmds if cmds else '— none set —'}\n\n"
-        f"_Owner can add/remove commands using `!addcmd` and `!remcmd`_"
-    )
-    m = await e.reply(msg) if not is_owner(e) else await e.edit(msg)
-    if not is_owner(e): asyncio.create_task(auto_del(m, 1))
+        if is_group:
+            text = (
+                f"**`PONG`** {status}\n"
+                f"┌ **Latency:** `{rtt:.1f}ms`\n"
+                f"└ **Account:** `{me.first_name}`"
+            )
+        else:
+            text = (
+                f"**`PONG`** {status}\n"
+                f"┌ **Latency:** `{rtt:.1f}ms`\n"
+                f"├ **Uptime:** `{uptime()}`\n"
+                f"└ **Account:** `{me.first_name}`"
+            )
 
+        await m.edit(text)
+        asyncio.create_task(auto_del(m,10))
+        if not is_owner(e):
+            try: asyncio.create_task(auto_del(e,10))
+            except: pass
+
+    # ── ALIVE ─────────────────────────────────
     @client.on(events.NewMessage(pattern=r'(?i)^[.!\/]?alive(?:@\w+)?$'))
     async def _(e):
         if not allowed(e,"alive"): return
-        msg = f"**Status:** Online\n**Account:** {me.first_name}\n**Uptime:** `{uptime()}`"
+        msg = (
+            f"**Status:** Online\n"
+            f"**Account:** {me.first_name}\n"
+            f"**Uptime:** `{uptime()}`"
+        )
         m = await e.reply(msg) if not is_owner(e) else await e.edit(msg)
         if not is_owner(e): asyncio.create_task(auto_del(m,10))
 
+    # ── ID ────────────────────────────────────
     @client.on(events.NewMessage(pattern=r'(?i)^[.!\/]?id(?:@\w+)?$'))
     async def _(e):
         if not allowed(e,"id"): return
@@ -345,9 +360,11 @@ async def _(e):
         m = await e.reply(msg) if not is_owner(e) else await e.edit(msg)
         if not is_owner(e): asyncio.create_task(auto_del(m,10))
 
+    # ── CHATID ────────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.chatid$'))
     async def _(e): await e.edit(f"**Chat ID:** `{e.chat_id}`")
 
+    # ── MYINFO ────────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.myinfo$'))
     async def _(e):
         try:
@@ -362,6 +379,7 @@ async def _(e):
             f"Bio: {bio}"
         )
 
+    # ── USERINFO ──────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.userinfo$'))
     async def _(e):
         if not e.is_reply: return await e.edit("Reply to a message.")
@@ -378,6 +396,84 @@ async def _(e):
             )
         except Exception as ex: await e.edit(f"Error: {ex}")
 
+    # ── WHOIS ─────────────────────────────────
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.whois(?: (.+))?$'))
+    async def _(e):
+        target = e.pattern_match.group(1)
+        if not target and not e.is_reply:
+            return await e.edit("Usage: `.whois @username` or reply to a message.")
+        try:
+            if e.is_reply:
+                r = await e.get_reply_message()
+                u = await client.get_entity(r.sender_id)
+            else:
+                u = await client.get_entity(target.strip())
+            full = await client(GetFullUserRequest(u.id))
+            bio  = getattr(full.full_user,'about',None) or "—"
+            common = getattr(full.full_user,'common_chats_count',0)
+            await e.edit(
+                f"**Who Is**\n\n"
+                f"Name: {getattr(u,'first_name','') or ''} {getattr(u,'last_name','') or ''}\n"
+                f"Username: @{getattr(u,'username',None) or '—'}\n"
+                f"ID: `{u.id}`\n"
+                f"Bio: {bio}\n"
+                f"Bot: {'Yes' if getattr(u,'bot',False) else 'No'}\n"
+                f"Scam: {'Yes' if getattr(u,'scam',False) else 'No'}\n"
+                f"Common Groups: `{common}`"
+            )
+        except Exception as ex: await e.edit(f"Error: {ex}")
+
+    # ── CHATINFO ──────────────────────────────
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.chatinfo$'))
+    async def _(e):
+        try:
+            chat = await e.get_chat()
+            cid  = e.chat_id
+            title = getattr(chat,'title', 'Private')
+            username = getattr(chat,'username',None)
+            if e.is_group or e.is_channel:
+                try:
+                    if e.is_channel:
+                        full = await client(GetFullChannelRequest(cid))
+                        members = getattr(full.full_chat,'participants_count',0)
+                    else:
+                        full = await client(GetFullChatRequest(-cid))
+                        members = getattr(full.full_chat,'participants_count',0)
+                except: members = "—"
+            else:
+                members = "—"
+            await e.edit(
+                f"**Chat Info**\n\n"
+                f"Title: {title}\n"
+                f"ID: `{cid}`\n"
+                f"Username: @{username or '—'}\n"
+                f"Members: `{members}`\n"
+                f"Type: {'Channel' if e.is_channel else 'Group' if e.is_group else 'Private'}"
+            )
+        except Exception as ex: await e.edit(f"Error: {ex}")
+
+    # ── DC INFO ───────────────────────────────
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.dc$'))
+    async def _(e):
+        dc_map = {
+            1: "Miami, USA",
+            2: "Amsterdam, Netherlands",
+            3: "Miami, USA",
+            4: "Amsterdam, Netherlands",
+            5: "Singapore"
+        }
+        try:
+            me_full = await client(GetFullUserRequest(uid))
+            dc = me_full.full_user.profile_photo.dc_id if me_full.full_user.profile_photo else "—"
+            location = dc_map.get(dc,"Unknown")
+            await e.edit(
+                f"**Datacenter Info**\n\n"
+                f"Your DC: `{dc}`\n"
+                f"Location: `{location}`"
+            )
+        except Exception as ex: await e.edit(f"Error: {ex}")
+
+    # ── SYSINFO ───────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.sysinfo$'))
     async def _(e):
         try:
@@ -392,9 +488,15 @@ async def _(e):
             )
         except: await e.edit(f"Sessions: `{len(USER_STATES)}`\nUptime: `{uptime()}`")
 
+    # ── PROFILE ───────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.bio (.+)'))
     async def _(e):
         try: await client(UpdateProfileRequest(about=e.pattern_match.group(1))); await e.edit("Bio updated.")
+        except Exception as ex: await e.edit(f"Error: {ex}")
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.clearbio$'))
+    async def _(e):
+        try: await client(UpdateProfileRequest(about="")); await e.edit("Bio cleared.")
         except Exception as ex: await e.edit(f"Error: {ex}")
 
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.name (.+)'))
@@ -416,8 +518,8 @@ async def _(e):
     async def _(e):
         try:
             p = await client.get_profile_photos("me")
-            if p: await client.delete_profile_photos(p[0])
-            await e.edit("Profile photo removed.")
+            if p: await client.delete_profile_photos(p[0]); await e.edit("Profile photo removed.")
+            else: await e.edit("No photo found.")
         except Exception as ex: await e.edit(f"Error: {ex}")
 
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.setpfp$'))
@@ -430,6 +532,7 @@ async def _(e):
         await client(UploadProfilePhotoRequest(file=file))
         await e.edit("Profile photo updated.")
 
+    # ── MESSAGES ──────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.del$'))
     async def _(e):
         if not e.is_reply: return await e.edit("Reply to a message.")
@@ -484,6 +587,20 @@ async def _(e):
         txt = (await e.get_reply_message()).text or ""
         await e.edit(f"Characters: `{len(txt)}`\nWords: `{len(txt.split())}`\nLines: `{txt.count(chr(10))+1}`")
 
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.quote$'))
+    async def _(e):
+        if not e.is_reply: return await e.edit("Reply to a message.")
+        r   = await e.get_reply_message()
+        sender = await r.get_sender()
+        name = getattr(sender,'first_name','Unknown') if sender else 'Unknown'
+        txt  = r.text or "[media]"
+        await e.delete()
+        await client.send_message(
+            e.chat_id,
+            f"**{name}:**\n> {txt}"
+        )
+
+    # ── TEXT STYLES ───────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.(bold|italic|mono|strike|underline|rev|upper|lower|mock|binary|hex|b64|morse|vapor)$'))
     async def _(e):
         if not e.is_reply: return await e.edit("Reply to a text message.")
@@ -507,6 +624,7 @@ async def _(e):
         else:                  out=orig
         await e.edit(out)
 
+    # ── UTILITIES ─────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.calc (.+)'))
     async def _(e):
         expr = e.pattern_match.group(1)
@@ -535,6 +653,56 @@ async def _(e):
             await client.send_message(e.chat_id,f"**Reminder:** {txt}")
         asyncio.create_task(_t())
 
+    # ── TTS ───────────────────────────────────
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.tts (.+)'))
+    async def _(e):
+        txt = e.pattern_match.group(1)
+        await e.edit("`Generating audio...`")
+        try:
+            from gtts import gTTS
+            tts = gTTS(text=txt, lang='bn' if re.search(r'[\u0980-\u09FF]',txt) else 'en')
+            path = "/tmp/tts.mp3"
+            tts.save(path)
+            await e.delete()
+            await client.send_file(e.chat_id, path, voice_note=True)
+        except Exception as ex:
+            await e.edit(f"Error: {ex}\n_(Install: `gtts`)_")
+
+    # ── QR CODE ───────────────────────────────
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.qr (.+)'))
+    async def _(e):
+        txt = e.pattern_match.group(1)
+        await e.edit("`Generating QR...`")
+        try:
+            import qrcode
+            img = qrcode.make(txt)
+            path = "/tmp/qr.png"
+            img.save(path)
+            await e.delete()
+            await client.send_file(e.chat_id, path, caption=f"`{txt}`")
+        except Exception as ex:
+            await e.edit(f"Error: {ex}\n_(Install: `qrcode[pil]`)_")
+
+    # ── STICKIFY ──────────────────────────────
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.stickify$'))
+    async def _(e):
+        if not e.is_reply: return await e.edit("Reply to a photo.")
+        r = await e.get_reply_message()
+        if not r.photo: return await e.edit("Not a photo.")
+        await e.edit("`Converting...`")
+        try:
+            from PIL import Image
+            path = await r.download_media()
+            img  = Image.open(path).convert("RGBA")
+            img.thumbnail((512,512))
+            out  = "/tmp/sticker.webp"
+            img.save(out,"WEBP")
+            await e.delete()
+            await client.send_file(e.chat_id, out)
+        except Exception as ex:
+            await e.edit(f"Error: {ex}\n_(Install: `Pillow`)_")
+
+    # ── NOTES ─────────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.note (\S+) (.+)'))
     async def _(e):
         k,v=e.pattern_match.group(1),e.pattern_match.group(2)
@@ -555,6 +723,7 @@ async def _(e):
         if k in notes: del notes[k]; await e.edit(f"Deleted `{k}`.")
         else: await e.edit(f"No note: `{k}`.")
 
+    # ── ANIMATIONS ────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.type (.+)'))
     async def _(e):
         txt=e.pattern_match.group(1); buf=""
@@ -584,6 +753,7 @@ async def _(e):
         for i in range(11):
             await e.edit(f"`{'▓'*i}{'░'*(10-i)} {i*10}%`"); await asyncio.sleep(0.12)
 
+    # ── MODERATION ────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.kick$'))
     async def _(e):
         if e.is_private or not e.is_reply: return await e.edit("Group only. Reply to a user.")
@@ -619,12 +789,25 @@ async def _(e):
             await e.edit("Restrictions removed.")
         except Exception as ex: await e.edit(f"Error: {ex}")
 
+    # ── AFK ───────────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.afk(?: |$)(.*)'))
     async def _(e):
         reason=e.pattern_match.group(1).strip() or db["afk_msg"]
         USER_STATES[uid]["is_afk"]=True; USER_STATES[uid]["reason"]=reason
         await e.edit(f"AFK enabled.\n{reason}")
 
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.busy$'))
+    async def _(e):
+        USER_STATES[uid]["is_afk"]=True
+        USER_STATES[uid]["reason"]="Busy right now, will reply later."
+        await e.edit("AFK enabled. (Busy)")
+
+    @client.on(events.NewMessage(outgoing=True, pattern=r'\.back$'))
+    async def _(e):
+        USER_STATES[uid]["is_afk"]=False
+        await e.edit("Back online.")
+
+    # ── OWNER CONFIG ──────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'!addcmd (.+)'))
     async def _(e):
         cmd=e.pattern_match.group(1).lower().strip()
@@ -680,7 +863,7 @@ async def _(e):
         db["afk_msg"]=e.pattern_match.group(1); save_db()
         USER_STATES[uid]["is_afk"]=True; USER_STATES[uid]["reason"]=db["afk_msg"]
         await e.edit("AFK enabled with custom message.")
-
+# ── INCOMING (AFK + triggers) ─────────────
     @client.on(events.NewMessage(incoming=True))
     async def _(e):
         if not e.text: return
@@ -703,10 +886,13 @@ async def _(e):
     async def _(e):
         st=USER_STATES.get(uid)
         if st and st["is_afk"] and e.text:
-            if e.text.startswith('!setafk') or e.text.startswith('.afk'): return
+            if e.text.startswith('!setafk') or e.text.startswith('.afk') or e.text.startswith('.busy'): return
             st["is_afk"]=False
             m=await e.respond("Back online."); await asyncio.sleep(2); await m.delete()
 
+# ══════════════════════════════════════════════
+#  BOOTSTRAP
+# ══════════════════════════════════════════════
 async def main():
     threading.Thread(target=run_server,daemon=True).start()
     bot = TelegramClient('controller',API_ID,API_HASH)
@@ -724,10 +910,10 @@ async def main():
                     register_userbot(cl,me)
                     print(f"[+] {me.first_name}")
                 else:
-                    print(f"[-] Session unauthorized")
+                    print(f"[-] Unauthorized session")
             except Exception as ex: print(f"[-] {ex}")
 
-    print(f"[+] Total sessions: {len(USER_STATES)}")
+    print(f"[+] Total: {len(USER_STATES)} session(s)")
     await bot.run_until_disconnected()
 
 if __name__ == '__main__':
