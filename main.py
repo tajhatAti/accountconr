@@ -624,84 +624,154 @@ def register_userbot(client, me):
         else:                  out=orig
         await e.edit(out)
 
-    # ── UTILITIES ─────────────────────────────
-    @client.on(events.NewMessage(outgoing=True, pattern=r'\.calc (.+)'))
+    # ── QR (public support) ───────────────────
+    @client.on(events.NewMessage(pattern=r'(?i)^[.!]?qr (.+)'))
     async def _(e):
-        expr = e.pattern_match.group(1)
-        if not re.fullmatch(r'[\d\s\.\+\-\*\/\(\)]+',expr):
-            return await e.edit("Only numbers and `+ - * / ( )` allowed.")
-        try: await e.edit(f"`{expr} = {eval(expr,{'__builtins__':{}})}`")
-        except: await e.edit("Invalid expression.")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'\.tr (\S+)$'))
-    async def _(e):
-        if not e.is_reply: return await e.edit("Reply to a message. e.g. `.tr bn`")
-        lang = e.pattern_match.group(1)
-        txt  = (await e.get_reply_message()).text or ""
-        if not txt: return await e.edit("No text to translate.")
-        try:
-            result = GoogleTranslator(source='auto',target=lang).translate(txt)
-            await e.edit(f"**Translation ({lang}):**\n{result}")
-        except Exception as ex: await e.edit(f"Error: {ex}")
-
-    @client.on(events.NewMessage(outgoing=True, pattern=r'\.remind (\d+) (.+)'))
-    async def _(e):
-        secs=int(e.pattern_match.group(1)); txt=e.pattern_match.group(2)
-        await e.edit(f"Reminder set for {secs}s.")
-        async def _t():
-            await asyncio.sleep(secs)
-            await client.send_message(e.chat_id,f"**Reminder:** {txt}")
-        asyncio.create_task(_t())
-
-    # ── TTS ───────────────────────────────────
-    @client.on(events.NewMessage(outgoing=True, pattern=r'\.tts (.+)'))
-    async def _(e):
+        if not allowed(e, "qr"): return
         txt = e.pattern_match.group(1)
-        await e.edit("`Generating audio...`")
-        try:
-            from gtts import gTTS
-            tts = gTTS(text=txt, lang='bn' if re.search(r'[\u0980-\u09FF]',txt) else 'en')
-            path = "/tmp/tts.mp3"
-            tts.save(path)
-            await e.delete()
-            await client.send_file(e.chat_id, path, voice_note=True)
-        except Exception as ex:
-            await e.edit(f"Error: {ex}\n_(Install: `gtts`)_")
-
-    # ── QR CODE ───────────────────────────────
-    @client.on(events.NewMessage(outgoing=True, pattern=r'\.qr (.+)'))
-    async def _(e):
-        txt = e.pattern_match.group(1)
-        await e.edit("`Generating QR...`")
+        m = await e.reply("`Generating QR...`") if not is_owner(e) else await e.edit("`Generating QR...`")
         try:
             import qrcode
-            img = qrcode.make(txt)
+            img  = qrcode.make(txt)
             path = "/tmp/qr.png"
             img.save(path)
-            await e.delete()
-            await client.send_file(e.chat_id, path, caption=f"`{txt}`")
+            await m.delete()
+            sent = await client.send_file(e.chat_id, path, caption=f"`{txt}`", reply_to=e.id)
+            if not is_owner(e): asyncio.create_task(auto_del(sent, 60))
         except Exception as ex:
-            await e.edit(f"Error: {ex}\n_(Install: `qrcode[pil]`)_")
+            await m.edit(f"Error: {ex}")
 
-    # ── STICKIFY ──────────────────────────────
-    @client.on(events.NewMessage(outgoing=True, pattern=r'\.stickify$'))
+    # ── TTS (public support) ──────────────────
+    @client.on(events.NewMessage(pattern=r'(?i)^[.!]?tts (.+)'))
     async def _(e):
-        if not e.is_reply: return await e.edit("Reply to a photo.")
+        if not allowed(e, "tts"): return
+        txt = e.pattern_match.group(1)
+        m = await e.reply("`Generating audio...`") if not is_owner(e) else await e.edit("`Generating audio...`")
+        try:
+            from gtts import gTTS
+            lang = 'bn' if re.search(r'[\u0980-\u09FF]', txt) else 'en'
+            gTTS(text=txt, lang=lang).save("/tmp/tts.mp3")
+            await m.delete()
+            sent = await client.send_file(e.chat_id, "/tmp/tts.mp3", voice_note=True, reply_to=e.id)
+            if not is_owner(e): asyncio.create_task(auto_del(sent, 60))
+        except Exception as ex:
+            await m.edit(f"Error: {ex}")
+
+    # ── TRANSLATE (public support) ────────────
+    @client.on(events.NewMessage(pattern=r'(?i)^[.!]?tr (\S+)$'))
+    async def _(e):
+        if not allowed(e, "tr"): return
+        if not e.is_reply:
+            m = await e.reply("Reply to a message.")
+            asyncio.create_task(auto_del(m, 10)); return
+        lang = e.pattern_match.group(1)
+        txt  = (await e.get_reply_message()).text or ""
+        if not txt:
+            m = await e.reply("No text to translate.")
+            asyncio.create_task(auto_del(m, 10)); return
+        try:
+            result = GoogleTranslator(source='auto', target=lang).translate(txt)
+            m = await e.reply(f"**Translation ({lang}):**\n{result}") if not is_owner(e) else await e.edit(f"**Translation ({lang}):**\n{result}")
+            if not is_owner(e): asyncio.create_task(auto_del(m, 60))
+        except Exception as ex:
+            m = await e.reply(f"Error: {ex}")
+            asyncio.create_task(auto_del(m, 10))
+
+    # ── STICKIFY (public support) ─────────────
+    @client.on(events.NewMessage(pattern=r'(?i)^[.!]?stickify$'))
+    async def _(e):
+        if not allowed(e, "stickify"): return
+        if not e.is_reply:
+            m = await e.reply("Reply to a photo.")
+            asyncio.create_task(auto_del(m, 10)); return
         r = await e.get_reply_message()
-        if not r.photo: return await e.edit("Not a photo.")
-        await e.edit("`Converting...`")
+        if not r.photo:
+            m = await e.reply("Not a photo.")
+            asyncio.create_task(auto_del(m, 10)); return
+        m = await e.reply("`Converting...`") if not is_owner(e) else await e.edit("`Converting...`")
         try:
             from PIL import Image
             path = await r.download_media()
             img  = Image.open(path).convert("RGBA")
-            img.thumbnail((512,512))
+            img.thumbnail((512, 512))
             out  = "/tmp/sticker.webp"
-            img.save(out,"WEBP")
-            await e.delete()
-            await client.send_file(e.chat_id, out)
+            img.save(out, "WEBP")
+            await m.delete()
+            sent = await client.send_file(e.chat_id, out, reply_to=e.id)
+            if not is_owner(e): asyncio.create_task(auto_del(sent, 60))
         except Exception as ex:
-            await e.edit(f"Error: {ex}\n_(Install: `Pillow`)_")
+            await m.edit(f"Error: {ex}")
 
+    # ── WEATHER (public support) ──────────────
+    @client.on(events.NewMessage(pattern=r'(?i)^[.!]?weather (.+)'))
+    async def _(e):
+        if not allowed(e, "weather"): return
+        city = e.pattern_match.group(1).strip()
+        try:
+            import urllib.request
+            url = f"https://wttr.in/{urllib.parse.quote(city)}?format=3"
+            with urllib.request.urlopen(url, timeout=5) as res:
+                data = res.read().decode()
+            m = await e.reply(f"🌤 {data}") if not is_owner(e) else await e.edit(f"🌤 {data}")
+            if not is_owner(e): asyncio.create_task(auto_del(m, 30))
+        except Exception as ex:
+            m = await e.reply(f"Error: {ex}")
+            asyncio.create_task(auto_del(m, 10))
+
+    # ── WIKI (public support) ─────────────────
+    @client.on(events.NewMessage(pattern=r'(?i)^[.!]?wiki (.+)'))
+    async def _(e):
+        if not allowed(e, "wiki"): return
+        query = e.pattern_match.group(1).strip()
+        try:
+            import urllib.request, json as _json
+            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(query)}"
+            with urllib.request.urlopen(url, timeout=5) as res:
+                data = _json.loads(res.read())
+            title   = data.get("title","")
+            extract = data.get("extract","No result.")[:500]
+            m = await e.reply(f"**{title}**\n\n{extract}") if not is_owner(e) else await e.edit(f"**{title}**\n\n{extract}")
+            if not is_owner(e): asyncio.create_task(auto_del(m, 60))
+        except Exception as ex:
+            m = await e.reply(f"Error: {ex}")
+            asyncio.create_task(auto_del(m, 10))
+
+    # ── URBAN (public support) ────────────────
+    @client.on(events.NewMessage(pattern=r'(?i)^[.!]?urban (.+)'))
+    async def _(e):
+        if not allowed(e, "urban"): return
+        query = e.pattern_match.group(1).strip()
+        try:
+            import urllib.request, json as _json
+            url = f"https://api.urbandictionary.com/v0/define?term={urllib.parse.quote(query)}"
+            with urllib.request.urlopen(url, timeout=5) as res:
+                data = _json.loads(res.read())
+            items = data.get("list", [])
+            if not items:
+                m = await e.reply("No definition found.")
+                asyncio.create_task(auto_del(m, 10)); return
+            defn = items[0]["definition"][:400].replace("[","").replace("]","")
+            m = await e.reply(f"**{query}**\n\n{defn}") if not is_owner(e) else await e.edit(f"**{query}**\n\n{defn}")
+            if not is_owner(e): asyncio.create_task(auto_del(m, 60))
+        except Exception as ex:
+            m = await e.reply(f"Error: {ex}")
+            asyncio.create_task(auto_del(m, 10))
+
+    # ── CALC (public support) ─────────────────
+    @client.on(events.NewMessage(pattern=r'(?i)^[.!]?calc (.+)'))
+    async def _(e):
+        if not allowed(e, "calc"): return
+        expr = e.pattern_match.group(1)
+        if not re.fullmatch(r'[\d\s\.\+\-\*\/\(\)]+', expr):
+            m = await e.reply("Only numbers and `+ - * / ( )` allowed.")
+            asyncio.create_task(auto_del(m, 10)); return
+        try:
+            result = eval(expr, {'__builtins__': {}})
+            m = await e.reply(f"`{expr} = {result}`") if not is_owner(e) else await e.edit(f"`{expr} = {result}`")
+            if not is_owner(e): asyncio.create_task(auto_del(m, 30))
+        except:
+            m = await e.reply("Invalid expression.")
+            asyncio.create_task(auto_del(m, 10))
     # ── NOTES ─────────────────────────────────
     @client.on(events.NewMessage(outgoing=True, pattern=r'\.note (\S+) (.+)'))
     async def _(e):
