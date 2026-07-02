@@ -56,9 +56,7 @@ def setup_controller(bot):
 
     @bot.on(events.NewMessage(pattern='/start'))
     async def _(e):
-        if e.sender_id != OWNER_ID:
-    print(f"Rejected: {e.sender_id}, Expected: {OWNER_ID}")
-    return
+        if e.sender_id != OWNER_ID: return
         await e.reply(
             "**Controller online.**\n\n"
             "Send a phone number (`+880...`) to add an account.\n"
